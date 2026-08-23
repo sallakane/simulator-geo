@@ -1,0 +1,104 @@
+# Pile de PRODUCTION (VPS mutualisé), auto-suffisante — à utiliser SEULE :
+#
+#   docker compose -f compose.prod.yaml ...
+#
+# FrankenPHP sert en HTTP clair sur :80 dans le conteneur ; le Caddy mutualisé
+# du VPS termine le TLS et proxifie api.zonage.sallakane.cloud vers
+# 127.0.0.1:${APP_HTTP_PORT} (SPEC §8, infra/Caddyfile.snippet).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SECRETS — comment ils arrivent (ne pas « simplifier ») :
+#   · `env_file: .env.local` les injecte comme VRAIES variables d'environnement
+#     dans le conteneur ; Symfony les préfère toujours aux fichiers .env.
+#   · L'interpolation des ${...} de CE fichier, elle, ne vient PAS de .env.local :
+#     Compose ne lit que .env (versionné, sans secret) ou son propre shell. Seul
+#     `EnvironmentFile=` de l'unité systemd la fournit.
+#   ⚠️ D'où : ne JAMAIS lancer `docker compose up` à la main sur le VPS — il
+#     résoudrait ${POSTGRES_PASSWORD} en `app` et casserait l'authentification.
+#     `ps`, `logs`, `exec` ne recréent rien et sont sans risque (les crons s'en
+#     servent). Cf. SPEC §13.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  database:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zonage}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      # Défaut `app` volontaire : permet aux crons (`exec` pg_dump) de tourner
+      # sans le secret. Le VRAI mot de passe est fourni au `up` par systemd.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+    volumes:
+      - database_data:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-zonage}", "-U", "${POSTGRES_USER:-app}"]
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      target: frankenphp_prod
+    depends_on:
+      database:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    environment:
+      APP_ENV: prod
+      SERVER_NAME: ":80"
+      RUN_MIGRATIONS: "1"
+      # Sans proxy de confiance, Symfony ignore X-Forwarded-Proto et
+      # X-Forwarded-For : il se croit en HTTP (URL absolues en clair, bloquées
+      # par le navigateur du site hôte) et le RateLimiter par IP compte l'IP du
+      # proxy — un seul compteur pour tout le trafic (SPEC §8).
+      # `private_ranges` : le port n'est bindé que sur la loopback, le seul
+      # chemin entrant est le Caddy de l'hôte.
+      SYMFONY_TRUSTED_PROXIES: private_ranges
+    ports:
+      # Loopback uniquement : jamais exposé directement. Port réservé au
+      # simulateur sur ce VPS = 8085 (SPEC §13 — vérifier avant de démarrer).
+      - "127.0.0.1:${APP_HTTP_PORT:-8085}:80"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: frankenphp_prod
+    # Attend que l'app soit healthy : migrations ET table messenger_messages
+    # sont alors faites. Sans ça, le worker échoue au premier consume.
+    depends_on:
+      database:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    environment:
+      APP_ENV: prod
+    healthcheck:
+      disable: true
+    # Relaie les leads vers le webform du partenaire, avec réessai (SPEC §6).
+    # S'il meurt, les leads s'empilent dans messenger_messages sans être
+    # livrés : panne silencieuse, à surveiller (SPEC §13).
+    # --time-limit fait redémarrer le worker périodiquement (libère la mémoire).
+    command: ["php", "bin/console", "messenger:consume", "async", "-v", "--time-limit=3600"]
+    restart: unless-stopped
+
+  # Outillage géospatial — profil `tools` : jamais démarré, invoqué à la demande
+  # par bin/charger-rga.sh --prod pour charger le shapefile déposé dans data/
+  # (SPEC §4.2, §13). Version figée : le pipeline doit être rejouable.
+  gis:
+    image: ghcr.io/osgeo/gdal:alpine-small-3.11.0
+    profiles: ["tools"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zonage}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+    volumes:
+      - ./data:/data:ro
+    command: ["ogrinfo", "--version"]
+
+volumes:
+  database_data:

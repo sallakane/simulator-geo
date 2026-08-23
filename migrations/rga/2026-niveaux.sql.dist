@@ -1,0 +1,37 @@
+-- MODÈLE — copier en `2026-niveaux.sql` (sans .dist) et compléter.
+-- bin/charger-rga.sh applique automatiquement `migrations/rga/<millesime>-niveaux.sql`
+-- s'il existe, et refuse d'aller plus loin sans lui.
+--
+-- Ce fichier est LA trace du mapping « libellé source → niveau_code ». Il est
+-- versionné pour deux raisons (SPEC §4.3) :
+--   · le code applicatif ne doit jamais dépendre d'un libellé du shapefile ;
+--   · au prochain millésime, on doit pouvoir comparer les deux mappings et voir
+--     ce que le nouveau zonage a changé.
+--
+-- Les valeurs ci-dessous sont des HYPOTHÈSES. Relever les vraies d'abord :
+--     make ogrinfo
+-- puis consigner le nom du champ et ses valeurs distinctes exactes (casse
+-- comprise) dans docs/donnees-rga.md.
+
+UPDATE rga_zone_2026 SET niveau_code = CASE lower(trim(<CHAMP_A_RELEVER>))
+    WHEN 'nul'    THEN 0
+    WHEN 'faible' THEN 1
+    WHEN 'moyen'  THEN 2
+    WHEN 'fort'   THEN 3
+END;
+
+-- Traçabilité : on garde le libellé source à côté du code normalisé.
+ALTER TABLE rga_zone_2026 ADD COLUMN IF NOT EXISTS niveau_libelle VARCHAR(50);
+UPDATE rga_zone_2026 SET niveau_libelle = <CHAMP_A_RELEVER>;
+
+-- Garde-fou : un libellé non prévu (nouveau millésime, casse différente) ne
+-- doit pas passer inaperçu. Sans ça, la zone concernée répondrait
+-- « hors périmètre » en production, silencieusement.
+DO $$
+DECLARE orphelins bigint;
+BEGIN
+    SELECT count(*) INTO orphelins FROM rga_zone_2026 WHERE niveau_code IS NULL;
+    IF orphelins > 0 THEN
+        RAISE EXCEPTION '% polygones sans niveau_code : libellé source non couvert par le mapping', orphelins;
+    END IF;
+END $$;

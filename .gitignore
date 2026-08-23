@@ -1,0 +1,20 @@
+/vendor/
+/var/
+/node_modules/
+
+# Secrets — SPEC §15
+.env.local
+.env.*.local
+.env.local.php
+
+# Donnée RGA : plusieurs centaines de Mo, rechargeable depuis la source (SPEC §4).
+# Le lien de téléchargement et la somme de contrôle sont dans docs/donnees-rga.md.
+/data/*
+!/data/.gitkeep
+
+/.idea/
+/phpunit.xml
+/.phpunit.cache/
+.phpunit.result.cache
+/config/secrets/prod/prod.decrypt.private.php
+/public/bundles/

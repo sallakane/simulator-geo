@@ -1,0 +1,8 @@
+# Sauvegarde quotidienne de la base. Installer :
+#   sudo cp infra/simulateur-backup.cron /etc/cron.d/simulateur-backup
+#
+# 3 h 40 : 3 h 20 est déjà pris par la sauvegarde d'un voisin sur ce VPS.
+# cron n'a pas d'EnvironmentFile ; le script se contente des défauts
+# app/zonage, suffisants pour un pg_dump via `exec`.
+
+40 3 * * * deploy /usr/local/bin/simulateur-backup >> /var/log/simulateur-backup.log 2>&1

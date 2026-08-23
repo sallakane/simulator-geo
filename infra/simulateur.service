@@ -1,0 +1,24 @@
+[Unit]
+Description=Simulateur RGA — stack Docker Compose (FrankenPHP + PostGIS + worker)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/var/www/simulateur
+
+# EnvironmentFile : met les secrets dans l'environnement du process
+# `docker compose`, qui s'en sert pour interpoler les ${...} de
+# compose.prod.yaml — POSTGRES_PASSWORD au premier chef. Sans lui, Compose se
+# rabat sur .env (versionné, sans secret) et la base refuse l'authentification.
+# Requis : mieux vaut un démarrage qui échoue qu'une API qui répond à côté.
+EnvironmentFile=/var/www/simulateur/.env.local
+
+ExecStart=/usr/bin/docker compose -f compose.prod.yaml up -d --build --remove-orphans
+ExecStop=/usr/bin/docker compose -f compose.prod.yaml down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

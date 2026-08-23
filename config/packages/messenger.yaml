@@ -1,0 +1,32 @@
+framework:
+    messenger:
+        # Un relais de lead qui échoue définitivement ne doit pas disparaître :
+        # il part ici, où on peut le rejouer (bin/console messenger:failed:show).
+        failure_transport: failed
+
+        transports:
+            # Le worker consomme `async` (compose.yaml / compose.prod.yaml).
+            # auto_setup=0 : la table messenger_messages est créée explicitement
+            # par l'entrypoint, pas au premier envoi.
+            async:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                retry_strategy:
+                    # Réessai exponentiel du relais vers le webform du partenaire
+                    # (SPEC §6). Au-delà, repli e-mail puis transport `failed`.
+                    max_retries: 3
+                    delay: 5000
+                    multiplier: 3
+            failed: 'doctrine://default?queue_name=failed'
+            sync: 'sync://'
+
+        routing:
+            # Route your messages to the transports
+            # 'App\Message\RelayLead': async
+
+# when@test:
+#    framework:
+#        messenger:
+#            transports:
+#                # replace with your transport name here (e.g., my_transport: 'in-memory://')
+#                # For more Messenger testing tools, see https://github.com/zenstruck/messenger-test
+#                async: 'in-memory://'

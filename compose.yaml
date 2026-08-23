@@ -1,0 +1,91 @@
+# Pile de DÉVELOPPEMENT (SPEC §12). `docker compose up` charge automatiquement
+# compose.override.yaml par-dessus ce fichier.
+#
+# La production est ailleurs et se suffit à elle-même : compose.prod.yaml (§13).
+#
+# ⚠️ Passer par le Makefile (`make up`) : il fournit `--env-file .env.local`,
+# sans quoi Compose n'interpole les ${...} que depuis .env — versionné, donc
+# sans le vrai mot de passe.
+services:
+  database:
+    # L'extension postgis est créée dans POSTGRES_DB à l'initialisation du
+    # volume : rien à faire à la main. En revanche cette image ne contient PAS
+    # shp2pgsql — le chargement du shapefile passe par ogr2ogr, dans le service
+    # `gis` (SPEC §4.2).
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zonage}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+    volumes:
+      - database_data:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-zonage}", "-U", "${POSTGRES_USER:-app}"]
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  app:
+    build:
+      context: .
+      target: frankenphp_dev
+    depends_on:
+      database:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    # Le conteneur tourne sous l'UID du poste : sans ça, tout ce qu'il écrit
+    # dans le bind-mount (var/cache, var/log, un `composer require` lancé
+    # dedans) appartient à root, et le développeur ne peut plus y toucher sans
+    # sudo. `make` exporte HOST_UID/HOST_GID.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      APP_ENV: dev
+      # :8080 et non :80 — un process non-root ne peut pas ouvrir un port
+      # privilégié. En production le conteneur tourne en root sur :80.
+      SERVER_NAME: ":8080"
+      # Caddy veut écrire ses dossiers de données ; /data et /config
+      # appartiennent à root dans l'image.
+      XDG_DATA_HOME: /tmp
+      XDG_CONFIG_HOME: /tmp
+      # Migrations au démarrage de CE service uniquement (cf. entrypoint).
+      RUN_MIGRATIONS: "1"
+    volumes:
+      - ./:/app
+    ports:
+      # Loopback uniquement, même en dev.
+      - "127.0.0.1:${APP_HTTP_PORT:-8085}:8080"
+
+  worker:
+    build:
+      context: .
+      target: frankenphp_dev
+    depends_on:
+      database:
+        condition: service_healthy
+      # Attend que `app` soit healthy : les migrations ET la création de
+      # messenger_messages sont alors faites. Sans cette dépendance, le worker
+      # démarre le premier et sort en erreur sur une table absente.
+      app:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      APP_ENV: dev
+      XDG_DATA_HOME: /tmp
+      XDG_CONFIG_HOME: /tmp
+    volumes:
+      - ./:/app
+    # Ce conteneur ne sert pas de HTTP : le healthcheck de l'image (curl :2019)
+    # ne s'applique pas.
+    healthcheck:
+      disable: true
+    # Le worker tourne AUSSI en dev : un relais de lead qui ne fonctionne qu'en
+    # production est un relais qu'on découvre cassé en production (SPEC §12).
+    # Pas de `restart` ici : tant que bin/console n'existe pas, il s'arrête au
+    # lieu de boucler dans les logs.
+    command: ["php", "bin/console", "messenger:consume", "async", "-vv", "--time-limit=3600"]
+
+volumes:
+  database_data:

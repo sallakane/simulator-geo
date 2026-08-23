@@ -1,0 +1,27 @@
+{
+	{$CADDY_GLOBAL_OPTIONS}
+	frankenphp
+}
+
+{$CADDY_EXTRA_CONFIG}
+
+# SERVER_NAME=:80 — HTTP clair. Le TLS et les en-têtes de sécurité (CSP
+# frame-ancestors, noindex, HSTS) sont posés par le Caddy mutualisé du VPS,
+# qui proxifie le domaine vers 127.0.0.1:${APP_HTTP_PORT} — cf. SPEC §8 et
+# infra/Caddyfile.snippet. Ne pas les dupliquer ici : deux sources de vérité
+# pour une CSP, c'est une CSP fausse.
+{$SERVER_NAME:localhost} {
+	log {
+		output stderr
+		format json
+	}
+
+	root * /app/public
+	encode zstd br gzip
+
+	# CORS et préflights OPTIONS sont traités par l'application, pas ici : la
+	# liste blanche vient de `partner.origines_autorisees` (SPEC §8), donc de la
+	# base. Un `respond 204` au niveau du serveur web répondrait sans les
+	# en-têtes Access-Control-*, et le préflight échouerait.
+	php_server
+}

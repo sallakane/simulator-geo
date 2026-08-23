@@ -1,0 +1,40 @@
+# Bloc à AJOUTER au Caddyfile mutualisé du VPS (/etc/caddy/Caddyfile), puis :
+#   sudo caddy validate --config /etc/caddy/Caddyfile   # valider AVANT
+#   sudo systemctl reload caddy                          # reload : sans coupure
+#
+# Ce fichier est PARTAGÉ avec les autres projets du VPS. Le casser coupe les
+# voisins (rapport-generator, sunu-cagnotte, Maison Brute…). Sauvegarder avant :
+#   sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%F-%H%M%S)
+#
+# ⚠️ VPS MUTUALISÉ — vérifier le port AVANT (ss -tlnp | grep 127.0.0.1:80) :
+#   8001 rapport-generator · 8009/8080 sunu-cagnotte · 8082 intranet BCEAO
+#   8083 Keycloak · 8084 Maison Brute · 8085 simulateur RGA
+# Un port qui pointe vers le mauvais service publierait le voisin sur ce
+# domaine — et l'exposerait en iframe sur le site du client.
+#
+# Prérequis DNS : un enregistrement A
+#   api.zonage.sallakane.cloud -> IP du VPS
+#
+# Le sous-domaine changera un jour (SPEC §1) : le modifier ICI, et nulle part
+# dans le code.
+
+api.zonage.sallakane.cloud {
+    encode zstd gzip
+
+    header {
+        # NE PAS mettre X-Frame-Options: DENY — le produit EXISTE pour être
+        # embarqué. C'est frame-ancestors qui restreint, et lui seul.
+        # Une entrée par partenaire (SPEC §8) ; à terme, générer ce bloc depuis
+        # la table `partner` plutôt que l'éditer à la main.
+        Content-Security-Policy "frame-ancestors https://atlantis-geotechnique.fr https://*.atlantis-geotechnique.fr"
+
+        # L'API et l'iframe n'ont rien à faire dans un index de recherche.
+        X-Robots-Tag              "noindex, nofollow"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+
+    # FrankenPHP écoute sur 127.0.0.1:8085 (compose.prod.yaml, APP_HTTP_PORT).
+    reverse_proxy localhost:8085
+}
