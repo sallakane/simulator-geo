@@ -62,12 +62,14 @@ final class ZonageController
             $request->query->getString('lon') ?: null,
         );
 
-        $resultat = $this->zonage->resoudre($point);
+        $codeInsee = $this->codeInsee($request->query->getString('insee'));
+        $resultat = $this->zonage->resoudre($point, $codeInsee);
 
         // Mesure sans donnée personnelle : coordonnées arrondies, rien d'autre
         // (SPEC §5). Écrite même hors périmètre — savoir combien de visiteurs
         // tombent sur ce message fait partie de ce qu'on veut mesurer.
         $simulation = new Simulation($partner, $point->lat, $point->lon, $resultat->niveauCode);
+        $simulation->setCodeInsee($codeInsee);
         $this->em->persist($simulation);
         $this->em->flush();
 
@@ -90,6 +92,19 @@ final class ZonageController
         }
 
         return $this->cors(new JsonResponse($charge), $origine);
+    }
+
+    /**
+     * Code commune facultatif, transmis par le widget depuis la Base Adresse
+     * Nationale. Il rend la détection de Paris exacte (SPEC §3).
+     *
+     * Une valeur malformée est ignorée, jamais rejetée : elle n'est qu'un
+     * complément, et refuser la requête priverait l'utilisateur d'une réponse
+     * qu'on sait parfaitement calculer sans elle.
+     */
+    private function codeInsee(string $brut): ?string
+    {
+        return preg_match('/^[0-9][0-9AB][0-9]{3}$/', $brut) ? $brut : null;
     }
 
     private function limiter(\Symfony\Component\RateLimiter\LimiterInterface $limiteur): void

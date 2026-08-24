@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Page de test — intégration du simulateur</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 32px 20px; color: #1a1a1a; }
+  header { border-bottom: 1px solid #e2e6ea; padding-bottom: 16px; margin-bottom: 24px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .rappel { background: #fffbe6; border: 1px solid #f0e3a0; border-radius: 8px; padding: 12px 14px; font-size: .9rem; }
+  #zonage-widget { margin: 24px 0; }
+  footer { margin-top: 40px; border-top: 1px solid #e2e6ea; padding-top: 16px; font-size: .85rem; color: #55606a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Page de test — intégration du simulateur</h1>
+  <p>Imite un site client. Sert à vérifier le parcours complet et, surtout, la dégradation gracieuse.</p>
+</header>
+
+<p class="rappel">
+  <strong>Ce qu'il faut vérifier ici :</strong> couper l'API
+  (<code>docker compose stop app</code>) puis recharger. Le bloc ci-dessous doit
+  rester <em>exactement</em> tel qu'il est écrit dans le HTML — le simulateur
+  disparaît, le site continue de convertir (SPEC §7).
+</p>
+
+<!-- Intégration côté site hôte. Le contenu du conteneur est le REPLI STATIQUE :
+     il reste visible tant que le simulateur n'a pas signalé qu'il fonctionne. -->
+<div id="zonage-widget">
+  <p>Vous vendez un terrain ou vous construisez ?
+     <a href="/demande-devis">Demandez votre devis d’étude de sol</a>.</p>
+</div>
+
+<script src="/widget.js?key=pk_dev_atlantis" async></script>
+
+<footer>
+  <p>Le clic sur un appel à l’action envoie <code>zonage:conversion</code> au site hôte
+     (le formulaire de devis arrive au lot 3).</p>
+</footer>
+<script>
+  // Trace utile pendant la recette : on voit passer les messages du widget.
+  window.addEventListener('message', function (e) {
+    if (e.data && typeof e.data === 'object' && String(e.data.type || '').indexOf('zonage:') === 0) {
+      console.log('[hôte] message reçu :', e.data);
+    }
+  });
+</script>
+</body>
+</html>

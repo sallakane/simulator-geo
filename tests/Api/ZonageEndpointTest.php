@@ -185,6 +185,72 @@ final class ZonageEndpointTest extends ApiTestCase
         self::assertSame('Zonage indisponible', $reponse['title']);
     }
 
+    /**
+     * Le widget transmet le `citycode` de la Base Adresse Nationale. Il rend la
+     * détection de Paris exacte, là où l'enveloppe géographique ne peut être
+     * qu'approchée (SPEC §3).
+     */
+    public function testLeCodeInseeParisienTrancheSansAmbiguite(): void
+    {
+        // Coordonnées volontairement hors de l'enveloppe de Paris : seul le
+        // code INSEE peut conclure ici.
+        $this->client->request('GET', '/api/v1/zonage', [
+            'key' => self::CLE, 'lat' => '46.00', 'lon' => '2.00', 'insee' => '75110',
+        ]);
+        $reponse = json_decode((string) $this->client->getResponse()->getContent(), true);
+
+        self::assertSame('hors_perimetre', $reponse['statut']);
+        self::assertSame('paris', $reponse['motif']);
+    }
+
+    /**
+     * L'inverse compte autant : une commune limitrophe tombe DANS l'enveloppe
+     * de Paris. Sans le code INSEE, Boulogne-Billancourt recevrait « la carte
+     * ne couvre pas Paris » — un contresens.
+     */
+    public function testUneCommuneLimitropheNestPasParis(): void
+    {
+        $this->client->request('GET', '/api/v1/zonage', [
+            'key' => self::CLE, 'lat' => '48.8352', 'lon' => '2.2409', 'insee' => '92012',
+        ]);
+        $reponse = json_decode((string) $this->client->getResponse()->getContent(), true);
+
+        self::assertSame('ok', $reponse['statut']);
+        self::assertSame('nul', $reponse['zone']['cle']);
+    }
+
+    /**
+     * Le code INSEE n'est qu'un complément : mal formé, il est ignoré, jamais
+     * rejeté. Refuser la requête priverait l'utilisateur d'une réponse qu'on
+     * sait calculer sans lui.
+     */
+    public function testUnCodeInseeMalformeEstIgnoreEtNonRejete(): void
+    {
+        $this->client->request('GET', '/api/v1/zonage', [
+            'key' => self::CLE, 'lat' => '48.65', 'lon' => '2.40', 'insee' => 'zzz',
+        ]);
+
+        self::assertResponseIsSuccessful();
+        self::assertNull(
+            $this->db()->fetchOne('SELECT code_insee FROM simulation'),
+            'un code invalide ne doit pas être stocké',
+        );
+    }
+
+    public function testLeCodeInseeEstConserveDansLaMesure(): void
+    {
+        $this->zonageAvecInsee(48.65, 2.40, '91521');
+
+        self::assertSame('91521', $this->db()->fetchOne('SELECT code_insee FROM simulation'));
+    }
+
+    private function zonageAvecInsee(float $lat, float $lon, string $insee): void
+    {
+        $this->client->request('GET', '/api/v1/zonage', [
+            'key' => self::CLE, 'lat' => (string) $lat, 'lon' => (string) $lon, 'insee' => $insee,
+        ]);
+    }
+
     public function testChaqueAppelEstMesureSansDonneePersonnelle(): void
     {
         $this->zonage(48.6512345, 2.4098765);

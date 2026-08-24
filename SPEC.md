@@ -333,6 +333,7 @@ Base : `https://api.zonage.sallakane.cloud`
 | `lat` | float | oui | WGS84, -90..90 |
 | `lon` | float | oui | WGS84, -180..180 |
 | `key` | string | oui | `partner.public_key` |
+| `insee` | string | non | Code commune (`citycode` de la BAN). Rend la détection de Paris exacte ; mal formé, il est **ignoré**, jamais rejeté. |
 
 **200 — zone trouvée**
 
@@ -450,10 +451,30 @@ Entrée, Échap), `aria-live` sur le résultat, focus visible,
 Saisie (≥ 4 caractères)
    └─> BAN /search  (navigateur, débounce 220 ms)
         └─> Sélection d'une adresse
-             └─> API /zonage?lat&lon&key
+             └─> API /zonage?lat&lon&key&insee
                   └─> Affichage du verdict + formulaire contextualisé
                        └─> API /lead  →  202
 ```
+
+### Protocole entre l'iframe et la page hôte
+
+Trois messages, tous émis par l'iframe :
+
+| Message | Rôle |
+|---|---|
+| `zonage:pret` | Le simulateur est monté. **Tant qu'il n'arrive pas, le repli statique reste affiché** — c'est là que se joue la dégradation gracieuse. |
+| `zonage:hauteur` | Hauteur à appliquer à l'iframe, à chaque changement de contenu. |
+| `zonage:conversion` | L'utilisateur a cliqué l'appel à l'action. Le site hôte peut y brancher son propre parcours. |
+
+Le chargeur n'accepte que les messages venant de l'origine du service **et** de
+sa propre iframe : une page hôte peut contenir d'autres cadres, et n'importe
+qui peut poster un message.
+
+### Ce qui reste au lot 3
+
+Le formulaire de devis pré-rempli et son envoi (`POST /api/v1/lead`). D'ici là,
+l'appel à l'action émet `zonage:conversion` : le parcours ne s'arrête donc pas
+sur un bouton mort, et le site hôte garde la main.
 
 ---
 
@@ -480,9 +501,14 @@ api.zonage.sallakane.cloud {
 }
 ```
 
-Chaque nouveau partenaire ajoute une entrée dans `frame-ancestors`. À terme,
-générer cette directive depuis la table `partner` — c'est-à-dire générer le
-snippet, pas l'éditer à la main.
+**`/embed` pose désormais sa propre directive `frame-ancestors`, calculée depuis
+`partner.origines_autorisees`.** Ajouter un partenaire n'impose plus de toucher
+au Caddyfile du VPS. Un partenaire sans origine déclarée reçoit
+`frame-ancestors 'none'` : le défaut sûr, et il se voit tout de suite.
+
+Le bloc Caddy ci-dessus reste en place comme borne extérieure (les deux CSP
+s'appliquent par intersection). Le supprimer un jour est une décision à prendre
+sciemment, pas un nettoyage.
 
 Le Caddyfile est **partagé avec les autres projets du VPS** : le valider avant
 de recharger, et recharger plutôt que redémarrer.
@@ -601,7 +627,7 @@ src/
   Controller/
     ZonageController.php
     LeadController.php        # lot 3
-    WidgetController.php      # lot 2
+    WidgetController.php      # /embed : valide la clé, pose la CSP, injecte la config
     HealthController.php
   Service/
     ZonageResolver.php        # SQL natif PostGIS, cœur métier
@@ -624,8 +650,10 @@ src/
   Security/
     OriginValidator.php
 public/
-  widget.js                   # chargeur, < 5 Ko
-  embed/                      # application iframe
+  widget.js                   # chargeur, < 5 Ko (budget vérifié par un test)
+  exemple-integration.html    # page de recette : parcours + dégradation
+templates/
+  embed.html                  # application iframe (HTML/CSS/JS, zéro dépendance)
 bin/
   charger-rga.sh              # pipeline §4, rejouable (--prod pour le VPS)
 docs/

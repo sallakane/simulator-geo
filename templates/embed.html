@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Simulateur d’exposition au retrait-gonflement des argiles</title>
+<style>
+  /* Aucune police externe : le widget doit se charger vite et ne rien demander
+     à un tiers. On hérite de la pile système. */
+  :root {
+    --accent: #1c5b7d;
+    --accent-clair: #e8f1f6;
+    --texte: #1a1a1a;
+    --texte-doux: #55606a;
+    --bord: #d4dae0;
+    --fond: #fff;
+    --fort: #b3261e;
+    --moyen: #b4600a;
+    --faible: #1c5b7d;
+    --nul: #2c6e49;
+    --rayon: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--texte); background: var(--fond);
+  }
+  .zone { padding: 4px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  .indice { color: var(--texte-doux); font-size: .875rem; margin: 0 0 10px; }
+
+  .champ { position: relative; }
+  input[type=text] {
+    width: 100%; padding: 12px 14px; font: inherit; color: inherit;
+    border: 1px solid var(--bord); border-radius: var(--rayon); background: #fff;
+  }
+  input[type=text]:focus-visible, button:focus-visible, li:focus-visible {
+    outline: 3px solid var(--accent); outline-offset: 2px;
+  }
+
+  ul[role=listbox] {
+    position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px);
+    margin: 0; padding: 4px; list-style: none; background: #fff;
+    border: 1px solid var(--bord); border-radius: var(--rayon);
+    box-shadow: 0 6px 24px rgba(0,0,0,.12); max-height: 260px; overflow-y: auto;
+  }
+  ul[hidden] { display: none; }
+  li[role=option] { padding: 10px 12px; border-radius: 6px; cursor: pointer; }
+  li[aria-selected=true], li:hover { background: var(--accent-clair); }
+
+  .verdict { margin-top: 16px; border: 1px solid var(--bord); border-left-width: 6px; border-radius: var(--rayon); padding: 16px; }
+  .verdict[data-niveau="3"] { border-left-color: var(--fort); }
+  .verdict[data-niveau="2"] { border-left-color: var(--moyen); }
+  .verdict[data-niveau="1"] { border-left-color: var(--faible); }
+  .verdict[data-niveau="0"] { border-left-color: var(--nul); }
+  .verdict[data-niveau="hors"], .verdict[data-niveau="panne"] { border-left-color: var(--texte-doux); }
+  .verdict h2 { margin: 0 0 4px; font-size: 1.125rem; }
+  .verdict p { margin: 0 0 10px; }
+  .adresse { color: var(--texte-doux); font-size: .875rem; margin: 0 0 10px; }
+  .obligation { background: var(--accent-clair); border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; }
+  .obligation strong { display: block; }
+  .approx { color: var(--moyen); font-size: .875rem; margin: 0 0 10px; }
+
+  .cta {
+    display: inline-block; padding: 12px 18px; font: inherit; font-weight: 600;
+    color: #fff; background: var(--accent); border: 0; border-radius: var(--rayon);
+    cursor: pointer; text-decoration: none;
+  }
+  .cta:hover { filter: brightness(1.08); }
+
+  .mentions { margin: 14px 0 0; font-size: .75rem; color: var(--texte-doux); }
+  .mentions p { margin: 0 0 4px; }
+
+  .chargement { font-size: .875rem; color: var(--texte-doux); margin-top: 10px; }
+
+  /* Respect strict de la préférence système : aucune animation imposée. */
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --texte:#e9edf0; --texte-doux:#a6b0ba; --fond:#14181c; --bord:#333c45; --accent-clair:#1b2a34; }
+    input[type=text], ul[role=listbox] { background:#1b2027; color:inherit; }
+  }
+</style>
+</head>
+<body>
+<div class="zone">
+  <label for="adresse">Adresse du terrain</label>
+  <p class="indice" id="indice">Saisissez au moins 4 caractères, puis choisissez une adresse dans la liste.</p>
+
+  <div class="champ">
+    <input id="adresse" type="text" autocomplete="off" spellcheck="false"
+           role="combobox" aria-expanded="false" aria-controls="suggestions"
+           aria-describedby="indice" aria-autocomplete="list"
+           placeholder="12 rue des Vignes, 91130 Ris-Orangis">
+    <ul id="suggestions" role="listbox" aria-label="Adresses proposées" hidden></ul>
+  </div>
+
+  <div id="etat" class="chargement" role="status" aria-live="polite"></div>
+  <div id="resultat"></div>
+
+  <div class="mentions">
+    <p>Source : BRGM / Géorisques — carte d’exposition au retrait-gonflement des argiles, arrêté du 9 janvier 2026.</p>
+    <p>Outil d’orientation. Il ne constitue ni un état des risques réglementaire ni un avis juridique : l’obligation dépend aussi du caractère non bâti et constructible du terrain et de la nature de l’opération.</p>
+  </div>
+</div>
+
+<script id="configuration" type="application/json">{{CONFIG}}</script>
+<script>
+(function () {
+  'use strict';
+
+  var config = JSON.parse(document.getElementById('configuration').textContent);
+  var DEBOUNCE_MS = 220;
+  var DELAI_RESEAU_MS = 3000;
+  var MIN_CARACTERES = 4;
+
+  var champ = document.getElementById('adresse');
+  var liste = document.getElementById('suggestions');
+  var etat = document.getElementById('etat');
+  var resultat = document.getElementById('resultat');
+
+  var propositions = [];
+  var actif = -1;
+  var minuteur = null;
+  var requete = null;
+
+  /* ------------------------------------------------------------------ hauteur
+     La page hôte ne peut pas connaître notre hauteur : on la lui envoie à
+     chaque changement de contenu (SPEC §7). */
+  function annoncerHauteur() {
+    var h = document.documentElement.scrollHeight;
+    parent.postMessage({ type: 'zonage:hauteur', hauteur: h }, '*');
+  }
+  if (window.ResizeObserver) {
+    new ResizeObserver(annoncerHauteur).observe(document.body);
+  } else {
+    window.addEventListener('resize', annoncerHauteur);
+  }
+
+  /* --------------------------------------------------------------- réseau */
+  function recuperer(url) {
+    // Aucun appel réseau sans limite de temps : au-delà de 3 s, on rend la
+    // main avec un message de repli plutôt que de laisser tourner (SPEC §7).
+    var controleur = new AbortController();
+    var expire = setTimeout(function () { controleur.abort(); }, DELAI_RESEAU_MS);
+
+    return fetch(url, { signal: controleur.signal, credentials: 'omit', mode: 'cors' })
+      .then(function (reponse) {
+        clearTimeout(expire);
+        return reponse.json().then(function (corps) {
+          return { statut: reponse.status, corps: corps };
+        });
+      });
+  }
+
+  /* -------------------------------------------------- autocomplétion (BAN) */
+  function chercher(saisie) {
+    // Géocodage appelé depuis le NAVIGATEUR, pas depuis notre serveur : moins
+    // de latence, et la charge ne pèse pas sur l'API (SPEC §3).
+    var url = 'https://api-adresse.data.gouv.fr/search/?limit=5&autocomplete=1&q=' + encodeURIComponent(saisie);
+
+    recuperer(url).then(function (r) {
+      afficherPropositions((r.corps && r.corps.features) || []);
+    }).catch(function () {
+      // Géocodeur indisponible : on ferme la liste sans bruit. L'utilisateur
+      // garde son champ et le repli du site hôte reste accessible.
+      fermer();
+    });
+  }
+
+  function afficherPropositions(features) {
+    propositions = features;
+    actif = -1;
+    liste.innerHTML = '';
+
+    if (!features.length) { fermer(); return; }
+
+    features.forEach(function (f, i) {
+      var li = document.createElement('li');
+      li.id = 'proposition-' + i;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', 'false');
+      li.textContent = f.properties.label;
+      li.addEventListener('mousedown', function (e) {
+        e.preventDefault(); // garder le focus dans le champ
+        choisir(i);
+      });
+      liste.appendChild(li);
+    });
+
+    liste.hidden = false;
+    champ.setAttribute('aria-expanded', 'true');
+    annoncerHauteur();
+  }
+
+  function fermer() {
+    liste.hidden = true;
+    liste.innerHTML = '';
+    propositions = [];
+    actif = -1;
+    champ.setAttribute('aria-expanded', 'false');
+    champ.removeAttribute('aria-activedescendant');
+  }
+
+  function surligner(index) {
+    var elements = liste.querySelectorAll('li');
+    for (var i = 0; i < elements.length; i++) {
+      elements[i].setAttribute('aria-selected', i === index ? 'true' : 'false');
+    }
+    if (index >= 0 && elements[index]) {
+      champ.setAttribute('aria-activedescendant', elements[index].id);
+      elements[index].scrollIntoView({ block: 'nearest' });
+    } else {
+      champ.removeAttribute('aria-activedescendant');
+    }
+    actif = index;
+  }
+
+  /* ------------------------------------------------------------ résolution */
+  function choisir(index) {
+    var feature = propositions[index];
+    if (!feature) { return; }
+
+    champ.value = feature.properties.label;
+    fermer();
+    interroger(feature);
+  }
+
+  function interroger(feature) {
+    // ⚠️ La BAN renvoie coordinates = [lon, lat] : longitude d'abord. Inverser
+    // ici produirait des coordonnées valides désignant un autre point du globe
+    // (SPEC §10).
+    var lon = feature.geometry.coordinates[0];
+    var lat = feature.geometry.coordinates[1];
+    var insee = feature.properties.citycode || '';
+
+    etat.textContent = 'Recherche du zonage…';
+    resultat.innerHTML = '';
+
+    var url = config.api + '/api/v1/zonage?key=' + encodeURIComponent(config.cle)
+      + '&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon)
+      + (insee ? '&insee=' + encodeURIComponent(insee) : '');
+
+    recuperer(url).then(function (r) {
+      etat.textContent = '';
+      if (r.statut !== 200) { afficherPanne(); return; }
+      afficherVerdict(r.corps, feature);
+    }).catch(function () {
+      etat.textContent = '';
+      afficherPanne();
+    });
+  }
+
+  /* --------------------------------------------------------------- verdict */
+  var TEXTES = {
+    3: { titre: 'Exposition forte au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
+    2: { titre: 'Exposition moyenne au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
+    1: { titre: 'Exposition faible au retrait-gonflement des argiles', cta: 'Demander une étude de projet' },
+    0: { titre: 'Pas d’exposition identifiée sur cette parcelle', cta: 'Demander conseil' }
+  };
+
+  function bloc(niveau) {
+    var d = document.createElement('div');
+    d.className = 'verdict';
+    d.setAttribute('data-niveau', niveau);
+    return d;
+  }
+
+  function ajouterAdresse(cible, feature) {
+    var p = document.createElement('p');
+    p.className = 'adresse';
+    p.textContent = feature.properties.label;
+    cible.appendChild(p);
+
+    // Lieu-dit ou voie sans numéro : la position est approchée, il faut le dire
+    // — la réponse peut changer d'une parcelle à l'autre (SPEC §10).
+    if (feature.properties.type !== 'housenumber') {
+      var a = document.createElement('p');
+      a.className = 'approx';
+      a.textContent = 'Localisation approchée : cette adresse ne comporte pas de numéro. '
+        + 'Le résultat vaut pour le secteur, pas pour une parcelle précise.';
+      cible.appendChild(a);
+    }
+  }
+
+  function bouton(libelle) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'cta';
+    b.textContent = libelle;
+    // Le formulaire de devis arrive avec le lot 3 : d'ici là, le clic remonte
+    // au site hôte, qui peut y brancher son propre parcours.
+    b.addEventListener('click', function () {
+      parent.postMessage({ type: 'zonage:conversion' }, '*');
+    });
+    return b;
+  }
+
+  function afficherVerdict(donnees, feature) {
+    resultat.innerHTML = '';
+
+    if (donnees.statut === 'hors_perimetre') {
+      var h = bloc('hors');
+      var t = document.createElement('h2');
+      t.textContent = 'Cette adresse n’est pas couverte par la carte';
+      h.appendChild(t);
+      ajouterAdresse(h, feature);
+      var m = document.createElement('p');
+      m.textContent = donnees.message;
+      h.appendChild(m);
+      // Jamais de cul-de-sac : même hors périmètre, on propose une suite
+      // (SPEC §1).
+      h.appendChild(bouton('Nous contacter'));
+      resultat.appendChild(h);
+      annoncerHauteur();
+      return;
+    }
+
+    var niveau = donnees.zone.code;
+    var textes = TEXTES[niveau];
+    var v = bloc(niveau);
+
+    var titre = document.createElement('h2');
+    titre.textContent = textes.titre;
+    v.appendChild(titre);
+
+    ajouterAdresse(v, feature);
+
+    if (donnees.obligation.applicable) {
+      var o = document.createElement('div');
+      o.className = 'obligation';
+      var fort = document.createElement('strong');
+      fort.textContent = 'Étude ' + donnees.obligation.mission + ' obligatoire — norme '
+        + donnees.obligation.norme;
+      o.appendChild(fort);
+      var texte = document.createElement('span');
+      texte.textContent = donnees.obligation.resume;
+      o.appendChild(texte);
+      v.appendChild(o);
+    } else {
+      var p = document.createElement('p');
+      p.textContent = donnees.obligation.resume;
+      v.appendChild(p);
+    }
+
+    v.appendChild(bouton(textes.cta));
+    resultat.appendChild(v);
+    annoncerHauteur();
+  }
+
+  function afficherPanne() {
+    // Panne côté API : on le dit, et on garde une porte de sortie. Le repli du
+    // site hôte, lui, n'a jamais été masqué si le widget n'a pas démarré.
+    resultat.innerHTML = '';
+    var d = bloc('panne');
+    var t = document.createElement('h2');
+    t.textContent = 'Le simulateur est momentanément indisponible';
+    d.appendChild(t);
+    var p = document.createElement('p');
+    p.textContent = 'Votre projet reste réalisable : contactez-nous, nous ferons le point sur '
+      + 'les études nécessaires pour votre terrain.';
+    d.appendChild(p);
+    d.appendChild(bouton('Nous contacter'));
+    resultat.appendChild(d);
+    annoncerHauteur();
+  }
+
+  /* ------------------------------------------------------------- clavier */
+  champ.addEventListener('input', function () {
+    var saisie = champ.value.trim();
+    clearTimeout(minuteur);
+
+    if (saisie.length < MIN_CARACTERES) { fermer(); return; }
+
+    // Anti-rafale : une frappe rapide ne doit pas déclencher dix appels.
+    minuteur = setTimeout(function () { chercher(saisie); }, DEBOUNCE_MS);
+  });
+
+  champ.addEventListener('keydown', function (e) {
+    if (liste.hidden && e.key === 'ArrowDown' && champ.value.trim().length >= MIN_CARACTERES) {
+      chercher(champ.value.trim());
+      return;
+    }
+    if (liste.hidden) { return; }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      surligner((actif + 1) % propositions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      surligner(actif <= 0 ? propositions.length - 1 : actif - 1);
+    } else if (e.key === 'Enter') {
+      if (actif >= 0) { e.preventDefault(); choisir(actif); }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      fermer();
+    }
+  });
+
+  champ.addEventListener('blur', function () {
+    setTimeout(fermer, 120); // laisse passer le clic sur une proposition
+  });
+
+  /* --------------------------------------------------------------- départ */
+  // Signal au chargeur : le simulateur est monté, il peut masquer le repli
+  // statique. Tant que ce message n'arrive pas, la page hôte reste intacte.
+  parent.postMessage({ type: 'zonage:pret' }, '*');
+  annoncerHauteur();
+})();
+</script>
+</body>
+</html>

@@ -32,7 +32,7 @@ final readonly class ZonageResolver
     ) {
     }
 
-    public function resoudre(Coordonnees $point): ZonageResult
+    public function resoudre(Coordonnees $point, ?string $codeInsee = null): ZonageResult
     {
         try {
             $ligne = $this->db->fetchAssociative(
@@ -59,7 +59,7 @@ final readonly class ZonageResolver
             return ZonageResult::zone((int) $ligne['niveau_code'], $ligne['millesime'] ?? null);
         }
 
-        return $this->interpreterLAbsenceDePolygone($point);
+        return $this->interpreterLAbsenceDePolygone($point, $codeInsee);
     }
 
     /**
@@ -76,16 +76,28 @@ final readonly class ZonageResolver
      * chargé : une donnée partiellement chargée ferait répondre « pas de
      * risque » sur des régions entières, sans la moindre erreur HTTP.
      */
-    private function interpreterLAbsenceDePolygone(Coordonnees $point): ZonageResult
+    private function interpreterLAbsenceDePolygone(Coordonnees $point, ?string $codeInsee): ZonageResult
     {
         if (!$point->estDansLaMetropole()) {
             return ZonageResult::horsPerimetre(ZonageResult::MOTIF_HORS_METROPOLE);
         }
 
         // La carte ne couvre pas la ville de Paris : ce n'est pas un trou dans
-        // la donnée, c'est le périmètre officiel. Approximation par enveloppe
-        // en attendant une couche communale — à remplacer par le code INSEE dès
-        // que le widget le transmettra.
+        // la donnée, c'est le périmètre officiel.
+        if (null !== $codeInsee) {
+            // Le widget transmet le `citycode` de la Base Adresse Nationale :
+            // 75056 pour Paris commune, 75101 à 75120 pour les arrondissements.
+            // C'est une réponse exacte, là où l'enveloppe ci-dessous ne peut
+            // être qu'approchée.
+            return str_starts_with($codeInsee, '751') || '75056' === $codeInsee
+                ? ZonageResult::horsPerimetre(ZonageResult::MOTIF_PARIS)
+                : ZonageResult::zone(0, $this->millesimeCourant());
+        }
+
+        // Sans code INSEE (appel direct à l'API), on retombe sur l'enveloppe de
+        // Paris. Elle déborde sur les communes limitrophes : celles-ci étant
+        // presque toutes couvertes par un polygone, le cas ne se présente qu'aux
+        // rares endroits non exposés de la petite couronne.
         if ($point->lon >= self::PARIS_LON_MIN && $point->lon <= self::PARIS_LON_MAX
             && $point->lat >= self::PARIS_LAT_MIN && $point->lat <= self::PARIS_LAT_MAX) {
             return ZonageResult::horsPerimetre(ZonageResult::MOTIF_PARIS);
