@@ -18,7 +18,7 @@ COMPOSE := docker compose --env-file .env --env-file .env.local
 APP     := $(COMPOSE) exec app
 
 .DEFAULT_GOAL := help
-.PHONY: help up down fresh build logs sh psql migrate test composer rga ogrinfo points
+.PHONY: help up down fresh build logs sh psql migrate test composer rga zonage-demo ogrinfo points
 
 help: ## Liste les cibles
 	@grep -hE '^[a-z.-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -57,8 +57,14 @@ psql: ## Console PostgreSQL
 migrate: ## Rejoue les migrations Doctrine
 	$(APP) php bin/console doctrine:migrations:migrate --no-interaction
 
-test: ## PHPUnit
+test: ## PHPUnit (crée et migre la base de test au besoin)
+	$(APP) php bin/console doctrine:database:create --env=test --if-not-exists -q
+	$(APP) php bin/console doctrine:migrations:migrate --env=test --no-interaction -q
 	$(APP) php bin/phpunit
+
+zonage-demo: ## Charge un zonage synthétique (4 carrés en Essonne) — dev sans les 600 Mo
+	$(COMPOSE) exec -T database psql -U app -d zonage -q -v ON_ERROR_STOP=1 < tests/fixtures/zonage-synthetique.sql
+	@echo "→ zonage synthétique en place ; le vrai millésime se charge avec make rga"
 
 composer: ## Composer dans le conteneur — ex. make composer c="require foo/bar"
 	$(APP) composer $(c)

@@ -19,6 +19,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
     volumes:
       - database_data:/var/lib/postgresql/data:rw
+      # Joué à l'initialisation du volume : retire les extensions PostGIS
+      # inutilisées, qui pollueraient l'introspection Doctrine.
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-zonage}", "-U", "${POSTGRES_USER:-app}"]
       timeout: 5s

@@ -2,6 +2,30 @@
 framework:
     secret: '%env(APP_SECRET)%'
 
+    # Limitation de débit (SPEC §8). C'est le SEUL rempart : il n'y a pas de
+    # `limit_req` en amont, le Caddy mutualisé du VPS n'en a pas nativement.
+    #
+    # ⚠️ L'IP vient de X-Forwarded-For : sans proxy de confiance
+    # (SYMFONY_TRUSTED_PROXIES, cf. compose.prod.yaml), tout le trafic partage
+    # le compteur de l'IP du proxy et la limite devient absurde.
+    rate_limiter:
+        zonage_ip:
+            policy: 'sliding_window'
+            limit: 30
+            interval: '1 minute'
+        # Garde-fou par partenaire : empêche une intégration emballée de saturer
+        # le service pour les autres. Valeur à réviser une fois le trafic réel
+        # mesuré — elle ne doit jamais gêner un usage normal.
+        zonage_cle:
+            policy: 'sliding_window'
+            limit: 600
+            interval: '1 minute'
+        # Formulaire de devis (lot 3) : 5 par minute et par IP.
+        lead_ip:
+            policy: 'sliding_window'
+            limit: 5
+            interval: '1 minute'
+
     # Note that the session will be started ONLY if you read or write from it.
     session: true
 

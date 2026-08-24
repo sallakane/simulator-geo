@@ -558,17 +558,26 @@ tests manuels sur la matrice de cas limites ci-dessus.
 src/
   Controller/
     ZonageController.php
-    LeadController.php
-    WidgetController.php
+    LeadController.php        # lot 3
+    WidgetController.php      # lot 2
     HealthController.php
   Service/
     ZonageResolver.php        # SQL natif PostGIS, cœur métier
-    ObligationMapper.php      # niveau_code → mission + textes
-    PartnerResolver.php       # clé + validation d'origine
+    ObligationMapper.php      # niveau_code → mission + textes réglementaires
+    PartnerResolver.php       # résolution de la clé publique
+  Model/
+    Coordonnees.php           # validation + détection de permutation lat/lon
+    ZonageResult.php
+  Exception/
+    ApiProblemException.php   # erreurs RFC 7807 (§6)
+  EventListener/
+    ApiProblemListener.php
+  Command/
+    CreatePartnerCommand.php  # app:partner:create — seule porte d'entrée client
   Message/
-    RelayLead.php
+    RelayLead.php             # lot 3
   MessageHandler/
-    RelayLeadHandler.php
+    RelayLeadHandler.php      # lot 3
   Entity/                     # Partner, Simulation, Lead
   Security/
     OriginValidator.php
@@ -582,7 +591,8 @@ docs/
   mise-a-jour-zonage.md       # procédure §4.4
   exploitation.md             # accès, déploiement, restauration
 tests/
-  fixtures/points-reference.json
+  fixtures/points-reference.json     # extrait de la donnée réelle (§10)
+  fixtures/zonage-synthetique.sql    # zonage de test, sans la donnée réelle
 migrations/
   rga/2026-niveaux.sql        # mapping libellé source → niveau_code (§4.3)
 data/                         # shapefiles — gitignoré, plusieurs centaines de Mo
@@ -632,13 +642,19 @@ Les ports hôtes sont choisis pour ne pas heurter les autres projets du poste
 ```bash
 cp .env.local.example .env.local     # APP_SECRET, POSTGRES_PASSWORD, MAILER_DSN
 make up                              # build + up + migrations
-make rga                             # charge le shapefile (§4) depuis data/
-curl -s localhost:8085/api/v1/health
+make zonage-demo                     # zonage synthétique : quatre carrés en Essonne
+docker compose exec app php bin/console app:partner:create "Mon client" \
+    --origine https://exemple.fr
+curl -s "localhost:8085/api/v1/zonage?key=pk_…&lat=48.65&lon=2.40"
 ```
 
+`make zonage-demo` permet de développer **sans** les 600 Mo de donnée
+officielle. Le vrai millésime se charge avec `make rga` (§4) et remplace la
+vue ; les deux ne cohabitent pas.
+
 Cibles du `Makefile` : `up`, `down`, `fresh`, `build`, `logs`, `sh`, `psql`,
-`migrate`, `test`, `rga`, `points` (régénère les points de référence de §10),
-`ogrinfo`.
+`migrate`, `composer`, `test`, `rga`, `zonage-demo`, `points` (régénère les
+points de référence de §10), `ogrinfo`.
 
 ### La donnée n'est pas dans le dépôt
 

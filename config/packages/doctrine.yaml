@@ -7,6 +7,12 @@ doctrine:
         #server_version: '16'
 
         profiling_collect_backtrace: '%kernel.debug%'
+
+        # Doctrine ne doit voir QUE les tables de l'application. Sans ce filtre,
+        # `doctrine:migrations:diff` génère des DROP sur spatial_ref_sys et sur
+        # les tables du zonage — c'est-à-dire sur PostGIS lui-même et sur la
+        # donnée chargée hors migration (SPEC §4).
+        schema_filter: '~^(?!spatial_ref_sys|geography_columns|geometry_columns|raster_columns|raster_overviews|rga_zone)~'
     orm:
         validate_xml_mapping: true
         naming_strategy: doctrine.orm.naming_strategy.underscore
