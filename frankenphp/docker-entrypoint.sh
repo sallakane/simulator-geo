@@ -15,9 +15,10 @@ if [ "$1" = 'frankenphp' ] || [ "$1" = 'php' ] || [ "$1" = 'bin/console' ]; then
 			done
 		fi
 
-		# Migrations sur le SEUL service portant RUN_MIGRATIONS=1 (l'app, jamais
-		# le worker : deux conteneurs migrant le même schéma en parallèle
-		# finiraient mal).
+		# Migrations sur le SEUL service portant RUN_MIGRATIONS=1. Un seul
+		# conteneur applicatif aujourd'hui, mais la garde reste : le jour où un
+		# second en démarre un, deux migrations concurrentes sur le même schéma
+		# finiraient mal.
 		#
 		# Un échec de migration empêche le conteneur de démarrer — c'est voulu :
 		# mieux vaut une API down qu'une API servant un schéma qu'elle ne

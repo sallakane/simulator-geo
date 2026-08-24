@@ -65,30 +65,6 @@ services:
       - "127.0.0.1:${APP_HTTP_PORT:-8085}:80"
     restart: unless-stopped
 
-  worker:
-    build:
-      context: .
-      target: frankenphp_prod
-    # Attend que l'app soit healthy : migrations ET table messenger_messages
-    # sont alors faites. Sans ça, le worker échoue au premier consume.
-    depends_on:
-      database:
-        condition: service_healthy
-      app:
-        condition: service_healthy
-    env_file:
-      - .env.local
-    environment:
-      APP_ENV: prod
-    healthcheck:
-      disable: true
-    # Relaie les leads vers le webform du partenaire, avec réessai (SPEC §6).
-    # S'il meurt, les leads s'empilent dans messenger_messages sans être
-    # livrés : panne silencieuse, à surveiller (SPEC §13).
-    # --time-limit fait redémarrer le worker périodiquement (libère la mémoire).
-    command: ["php", "bin/console", "messenger:consume", "async", "-v", "--time-limit=3600"]
-    restart: unless-stopped
-
   # Outillage géospatial — profil `tools` : jamais démarré, invoqué à la demande
   # par bin/charger-rga.sh --prod pour charger le shapefile déposé dans data/
   # (SPEC §4.2, §13). Version figée : le pipeline doit être rejouable.

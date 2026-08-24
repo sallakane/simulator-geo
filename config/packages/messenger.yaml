@@ -5,7 +5,12 @@ framework:
         failure_transport: failed
 
         transports:
-            # Le worker consomme `async` (compose.yaml / compose.prod.yaml).
+            # ⚠️ AUCUN CONSOMMATEUR. Le lead ne transitant plus par ce serveur
+            # (SPEC §5), il n'y a plus rien à relayer : le conteneur `worker` a
+            # été retiré. Router un message vers `async` le laisserait dormir
+            # indéfiniment dans messenger_messages, sans erreur.
+            # Remettre un worker EN MÊME TEMPS que le premier routage.
+            #
             # auto_setup=0 : la table messenger_messages est créée explicitement
             # par l'entrypoint, pas au premier envoi.
             async:

@@ -59,38 +59,5 @@ services:
       # Loopback uniquement, même en dev.
       - "127.0.0.1:${APP_HTTP_PORT:-8085}:8080"
 
-  worker:
-    build:
-      context: .
-      target: frankenphp_dev
-    depends_on:
-      database:
-        condition: service_healthy
-      # Attend que `app` soit healthy : les migrations ET la création de
-      # messenger_messages sont alors faites. Sans cette dépendance, le worker
-      # démarre le premier et sort en erreur sur une table absente.
-      app:
-        condition: service_healthy
-    env_file:
-      - .env.local
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
-    environment:
-      APP_ENV: dev
-      XDG_DATA_HOME: /tmp
-      XDG_CONFIG_HOME: /tmp
-    volumes:
-      - ./:/app
-    # Ce conteneur ne sert pas de HTTP : le healthcheck de l'image (curl :2019)
-    # ne s'applique pas.
-    healthcheck:
-      disable: true
-    # Le worker tourne AUSSI en dev : un relais de lead qui ne fonctionne qu'en
-    # production est un relais qu'on découvre cassé en production (SPEC §12).
-    command: ["php", "bin/console", "messenger:consume", "async", "-vv", "--time-limit=3600"]
-    # --time-limit fait sortir le worker toutes les heures (libère la mémoire) :
-    # sans `restart`, il ne revient jamais et les leads s'empilent en silence
-    # dans messenger_messages. Comme en production.
-    restart: unless-stopped
-
 volumes:
   database_data:

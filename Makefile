@@ -45,7 +45,7 @@ fresh: ## Arrête ET SUPPRIME le volume Postgres (perte des données locales)
 build: ## Reconstruit les images sans cache
 	$(COMPOSE) build --no-cache
 
-logs: ## Suit les logs (app + worker + base)
+logs: ## Suit les logs (app + base)
 	$(COMPOSE) logs -f
 
 sh: ## Shell dans le conteneur app

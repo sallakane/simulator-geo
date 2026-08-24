@@ -70,7 +70,7 @@ spécifique au client passe par la table `partner` (voir §5).
 | Framework | Symfony 7.x | |
 | Base | PostgreSQL 16 + PostGIS 3.4 | Requête point-dans-polygone |
 | ORM | Doctrine, + SQL natif pour le spatial | Doctrine ne gère pas PostGIS nativement |
-| File d'attente | Symfony Messenger (transport Doctrine) | ⚠️ **Sans emploi** depuis que le lead ne transite plus par ce serveur (§5). Installé, configuré, mais plus rien à consommer. |
+| File d'attente | Symfony Messenger (transport Doctrine) | ⚠️ **Sans emploi et sans consommateur** depuis que le lead ne transite plus par ce serveur (§5). Configuré, mais le conteneur worker a été retiré. |
 | Front widget | JavaScript sans framework | Poids < 15 Ko, zéro dépendance |
 | Runtime HTTP | FrankenPHP (Caddy + PHP embarqués) | Une image, un process ; même binaire en dev et en prod |
 | Conteneurisation | Docker Compose, en dev **et** en prod | PostGIS ne s'installe pas proprement à la main ; parité dev/prod |
@@ -723,7 +723,7 @@ data/                         # shapefiles — gitignoré, plusieurs centaines d
 Dockerfile                    # multi-stage FrankenPHP : base / dev / prod
 compose.yaml                  # services communs
 compose.override.yaml         # dev : bind-mount, ports exposés, Mailpit
-compose.prod.yaml             # prod : image buildée, worker, pas de bind-mount
+compose.prod.yaml             # prod : image buildée, pas de bind-mount
 Makefile                      # raccourcis dev (§12)
 frankenphp/
   Caddyfile                   # interne au conteneur (php_server)
@@ -752,7 +752,6 @@ sans `shp2pgsql`.
 |---|---|---|---|
 | `app` | build local, cible `frankenphp_dev` | Symfony + FrankenPHP | `127.0.0.1:8085` → 8080 |
 | `database` | `postgis/postgis:16-3.4` | Postgres + PostGIS | `5435` → 5432 |
-| `worker` | même image que `app` | `messenger:consume` | — |
 | `mailer` | `axllent/mailpit` | repli e-mail des leads, en bac à sable | `8028` (UI), `1028` (SMTP) |
 | `gis` | GDAL, version figée, profil `tools` | `ogrinfo` (§4.1) et `ogr2ogr` (§4.2) | — |
 
@@ -792,13 +791,9 @@ production (§13).
 |---|---|---|
 | Code | bind-mount `./:/app` | copié dans l'image au build |
 | `APP_ENV` | `dev`, profiler actif | `prod`, cache warmé au build |
-| Messenger | conteneur `worker` (comme en prod) | idem |
 | E-mails | Mailpit | SMTP réel via `MAILER_DSN` |
 | TLS | aucun, HTTP clair sur 8085 | Caddy mutualisé du VPS |
 | Migrations | `make migrate`, à la demande | entrypoint, `RUN_MIGRATIONS=1` sur `app` seul |
-
-Le worker tourne aussi en dev : un relais de lead qui ne marche qu'en
-production est un relais qu'on découvre cassé en production.
 
 ### Pièges connus
 
@@ -825,9 +820,10 @@ production est un relais qu'on découvre cassé en production.
 - **Pas de `VOLUME /app/var/` dans l'image.** Docker y créerait un volume
   anonyme appartenant à root qui masque le `var/` du poste : cache Symfony
   impossible à écrire, conteneur qui sort en erreur au démarrage.
-- **Le worker attend que `app` soit *healthy*.** Il consomme un transport
-  Doctrine : démarré en premier, il échoue sur `messenger_messages` absente,
-  puisque c'est l'entrypoint de `app` qui crée la table.
+- **Messenger n'a plus de consommateur.** Le conteneur `worker` a été retiré
+  quand le lead a cessé de transiter par ce serveur (§5). Router un message
+  vers `async` le laisserait dormir indéfiniment, sans erreur : remettre un
+  worker en même temps que le premier routage, pas après.
 
 ---
 
@@ -879,7 +875,7 @@ scp ExpoArgile_Fr_metro_L93.* deploy@vps:/var/www/simulateur/data/
 ./bin/charger-rga.sh --prod
 
 # 5. Vérifier AVANT d'exposer le domaine
-docker compose -f compose.prod.yaml ps          # app / worker / database « healthy »
+docker compose -f compose.prod.yaml ps          # app / database « healthy »
 curl -s localhost:8085/api/v1/health            # polygones > 0, millésime attendu
 ```
 
@@ -954,8 +950,7 @@ l'API répondrait `hors_perimetre` pour la France entière. C'est la panne la pl
 coûteuse de ce produit, et la plus silencieuse.
 
 Côté hôte : `docker compose -f compose.prod.yaml ps` et
-`... logs -f app` / `... logs -f worker`. Un worker mort ne se voit pas non
-plus : les leads s'empilent dans `messenger_messages` sans être relayés.
+`... logs -f app`.
 
 ---
 
