@@ -29,9 +29,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
     volumes:
       - database_data:/var/lib/postgresql/data:rw
-      # Joué à l'initialisation du volume : retire les extensions PostGIS
-      # inutilisées, qui pollueraient l'introspection Doctrine.
-      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+      # Le FICHIER, pas le répertoire : monter le répertoire masquerait le
+      # script d'initialisation de l'image PostGIS, et toute base neuve
+      # naîtrait sans l'extension postgis. Vérifié à la dure en répétition.
+      - ./docker/db/init/20-extensions.sql:/docker-entrypoint-initdb.d/20-extensions.sql:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-zonage}", "-U", "${POSTGRES_USER:-app}"]
       timeout: 5s

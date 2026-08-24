@@ -4,6 +4,10 @@ var/
 vendor/
 node_modules/
 tests/
+# …sauf le jeu de non-régression du zonage : ce n'est pas un fichier de test,
+# c'est ce que `app:zonage:verifier` rejoue LÀ OÙ la vraie donnée est chargée,
+# donc sur le VPS après chaque mise à jour de millésime (SPEC §4.4).
+!tests/fixtures/points-reference.json
 docs/
 data/
 infra/

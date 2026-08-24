@@ -60,8 +60,10 @@ RUN set -eux; \
     composer install --no-cache --no-dev --no-autoloader --no-scripts --no-progress
 
 COPY --link . ./
-# Ce qui n'a rien à faire dans une image de production.
-RUN rm -Rf frankenphp/ infra/ docs/ tests/ data/ *.md
+# Le gros du tri est fait par .dockerignore (tests, docs, infra, data ne sont
+# même pas dans le contexte). Restent les fichiers de construction de l'image,
+# qui n'ont plus d'utilité une fois l'image construite.
+RUN rm -Rf frankenphp/
 
 # Pas de `composer dump-env prod` ici, contrairement à d'autres projets du VPS :
 # le .env.local.php qu'il produit fige des secrets VIDES (le .dockerignore

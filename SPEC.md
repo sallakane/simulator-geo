@@ -848,6 +848,7 @@ unité systemd, aucune installation manuelle.
 ```bash
 ss -tlnp | grep 127.0.0.1:80    # qui écoute déjà
 docker ps                        # au nom de quel projet
+df -h /var/lib/docker            # ~2 Go nécessaires (base ~1 Go + shapefile ~1 Go)
 ```
 
 Un port occupé par un voisin publierait **son** site sur
@@ -889,6 +890,24 @@ sudo caddy validate --config /etc/caddy/Caddyfile    # valider AVANT
 sudo systemctl reload caddy                          # reload : les voisins ne tombent pas
 ```
 
+### Répéter avant de déployer
+
+La pile de production se monte à l'identique sur le poste, depuis le dépôt seul,
+sur un port libre :
+
+```bash
+git worktree add /tmp/repetition HEAD && cd /tmp/repetition
+cp .env.local.example .env.local   # puis remplir, avec APP_HTTP_PORT=8095
+set -a; . ./.env.local; set +a     # ce que fait systemd sur le VPS
+docker compose -f compose.prod.yaml -p repetition up -d --build
+```
+
+Cette répétition a trouvé, avant le VPS : une base neuve **sans PostGIS** (un
+montage de répertoire masquait le script d'initialisation de l'image), le jeu de
+points de référence **absent de l'image** de production, une page HTML renvoyée
+sur une route d'API en cas de panne de base, et une commande de restauration
+inexécutable. Aucun de ces défauts ne se voyait en développement.
+
 ### L'unité systemd
 
 `infra/simulateur.service` — `Type=oneshot`, `RemainAfterExit=true`,
@@ -915,31 +934,32 @@ sans interruption de service (bascule de la vue `rga_zone_courante`).
 
 ### Sauvegarde et restauration
 
-`infra/simulateur-backup.sh` : `pg_dump` via `docker compose exec -T database`,
-compressé dans `/var/backups/simulateur`, rotation 14 jours, lancé à **3 h 40**
+`infra/simulateur-backup.sh` : `pg_dump -Fc` via `docker compose exec -T
+database`, dans `/var/backups/simulateur`, rotation 14 jours, lancé à **3 h 40**
 (3 h 20 est déjà pris par un voisin).
 
-Deux natures de données, une seule est irremplaçable :
+**On ne sauvegarde que ce qu'on ne peut pas reconstituer** : `partner` et
+`simulation`. Le zonage est exclu du dump — il se recharge depuis le shapefile
+officiel, dont l'URL et la somme de contrôle sont consignées.
 
-- `rga_zone*` — rechargeable depuis la source (§4). Le dump n'est qu'un confort.
-- `partner`, `simulation`, `lead` — aucune source externe. C'est ce qu'on
-  sauvegarde vraiment.
+Ce n'est pas une coquetterie. Mesuré sur le millésime 2026 : dump complet
+**383 Mo en 36 s**, dump sans le zonage **9,6 Ko en 0,2 s**. Sur 14 jours de
+rétention, 5,4 Go contre 140 Ko — sur un VPS partagé avec d'autres projets.
 
-Restauration (à tester **avant** la mise en production, cf. §15) :
+Conséquence, à ne pas découvrir le jour du sinistre : **la restauration se fait
+en deux temps**, le dump puis le rechargement du zonage. Tant que le zonage
+manque, `/api/v1/health` répond 503 — la panne est bruyante.
 
-```bash
-gunzip -c /var/backups/simulateur/simulateur-<horodatage>.sql.gz \
-  | docker compose -f compose.prod.yaml exec -T database psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-```
-
-La procédure complète, avec le temps qu'elle a réellement pris lors du test,
-est consignée dans `docs/exploitation.md`.
+La procédure a été **jouée** (suppression des tables, restauration,
+vérification), avec ses deux surprises — `pg_restore -j` impossible depuis
+l'entrée standard, et une erreur attendue sur `DROP EXTENSION postgis`. Tout
+est dans `docs/exploitation.md`.
 
 ### Tâches planifiées
 
 | Quoi | Quand | Fichier |
 |---|---|---|
-| Sauvegarde de la base | 3 h 40 | `infra/simulateur-backup.cron` |
+| Sauvegarde de `partner` et `simulation` | 3 h 40 | `infra/simulateur-backup.cron` |
 | Renouvellement TLS | automatique (Caddy) | supervision de la date d'expiration (§8) |
 
 ### Supervision

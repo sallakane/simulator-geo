@@ -6,6 +6,11 @@
 -- introspecte : `doctrine:migrations:diff` génère alors des DROP sur des objets
 -- de PostGIS lui-même. Les retirer, c'est à la fois moins de surface et un
 -- diff exploitable.
+-- Filet de sécurité : ce produit ne peut rien faire sans PostGIS, et une base
+-- qui démarre sans l'extension ne se signale que bien plus tard, au premier
+-- chargement de zonage.
+CREATE EXTENSION IF NOT EXISTS postgis;
+
 DROP EXTENSION IF EXISTS postgis_tiger_geocoder CASCADE;
 DROP EXTENSION IF EXISTS postgis_topology CASCADE;
 DROP EXTENSION IF EXISTS fuzzystrmatch CASCADE;
