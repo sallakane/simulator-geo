@@ -134,6 +134,18 @@ la charge ne pèse pas sur l'API.
 - Vérifier la couverture de la Corse lors du chargement.
 - DOM-TOM hors périmètre.
 
+**La carte ne dessine que les zones exposées.** Relevé sur le millésime 2026
+(voir `docs/donnees-rga.md`) : trois valeurs seulement — 1, 2, 3 — et **aucun
+polygone de niveau 0**, pour 395 455 km² couverts sur ~551 700 km² de
+métropole. En France métropolitaine et hors Paris, l'absence de polygone est
+donc une **réponse** : « exposition nulle », avec son propre appel à l'action.
+Elle n'est un hors-périmètre qu'en dehors de la métropole, ou sur Paris.
+
+Cette lecture a un coût : une donnée partiellement chargée ferait répondre
+« pas de risque » sur des régions entières, en HTTP 200, sans rien signaler.
+D'où le contrôle de complétude au chargement (§4.2) — et il n'est pas
+facultatif.
+
 ---
 
 ## 4. Pipeline de données
@@ -175,7 +187,17 @@ ogr2ogr -f PostgreSQL PG:"host=database dbname=… user=… password=…" \
 
 `SHAPE_ENCODING` dépend de l'encodage réel du `.dbf`, et `-s_srs` du SRID
 annoncé par le `.prj` — les deux sont relevés à l'inspection (§4.1), pas
-supposés.
+supposés. Pour le millésime 2026, le `.cpg` déclare **UTF-8** et non LATIN1.
+
+`-lco PRECISION=NO` n'est pas cosmétique : les largeurs déclarées dans le `.dbf`
+sont fantaisistes (`surf_m2` en `Real(24.15)`, dont GDAL déduit un
+`NUMERIC(23,15)` incapable de stocker 1,4 milliard de m²). Sans cette option, le
+chargement s'arrête à 80 %.
+
+**Contrôle de complétude, obligatoire.** Le script compare le nombre de
+polygones chargés à celui du shapefile et **refuse de basculer la vue** en cas
+d'écart. C'est le seul garde-fou contre un chargement partiel, qui serait
+invisible autrement (§3).
 
 Cette commande n'est jamais tapée telle quelle : elle vit dans
 `bin/charger-rga.sh`, qui prend un `--prod` pour viser `compose.prod.yaml`. La
@@ -210,14 +232,31 @@ versionné, pas dans le code applicatif.
 Le zonage a changé au 1er juillet 2026 ; il rechangera. La procédure doit être
 rejouable et documentée dans `docs/mise-a-jour-zonage.md` :
 
-1. charger le nouveau millésime dans `rga_zone_<annee>` ;
-2. vérifier le nombre de polygones et la couverture (voir tests §10) ;
-3. rejouer le jeu de test de non-régression ;
-4. basculer une vue `rga_zone_courante` sur la nouvelle table ;
-5. conserver l'ancienne table (traçabilité).
+```bash
+# 1. Relever les champs du nouveau millésime — ne jamais supposer (§4.1)
+make ogrinfo
+$EDITOR docs/donnees-rga.md migrations/rga/<annee>-niveaux.sql
+
+# 2. Charger dans rga_zone_<annee>. Le service continue de répondre :
+#    la vue pointe toujours sur l'ancien millésime.
+./bin/charger-rga.sh --millesime <annee> --shp data/<fichier>.shp --encoding <ENC>
+
+# 3. Mettre en service, puis rejouer le jeu de référence
+./bin/charger-rga.sh --millesime <annee> --bascule
+make points                              # régénère les points depuis la donnée servie
+make verifier                            # les rejoue — doit passer intégralement
+```
+
+Le chargement (étape 2) et la mise en service (étape 3) sont **séparés
+volontairement** : on vérifie avant de servir. L'ancienne table est conservée
+pour la traçabilité, et la bascule est transactionnelle — pas de fenêtre pendant
+laquelle la vue n'existe pas.
 
 Le code interroge **toujours** `rga_zone_courante`, jamais une table millésimée
-directement.
+directement. Cette vue expose une projection explicite
+(`id, geom, niveau_code, niveau_libelle, millesime`) : c'est le contrat entre la
+donnée et le code, et il ne doit pas bouger quand le shapefile change de
+colonnes.
 
 ---
 
@@ -539,6 +578,9 @@ Résultat figé dans `tests/fixtures/points-reference.json`, rejoué à chaque m
 | Clé partenaire inconnue / inactive | 403 |
 | Origine non autorisée | 403 |
 | API indisponible | Widget : repli statique conservé |
+| Point en métropole sans polygone | `zone.cle = nul`, **pas** `hors_perimetre` |
+| Zonage absent en base | 503, jamais un « hors périmètre » massif |
+| Chargement partiel | Refus de basculer `rga_zone_courante` (§4.2) |
 
 > Piège récurrent : l'API Géorisques attend `latlon=lon,lat` — **longitude
 > d'abord**. La BAN renvoie `geometry.coordinates = [lon, lat]`. Écrire un test

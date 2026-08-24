@@ -1,0 +1,20 @@
+[
+    {
+        "lat": 48.144629,
+        "lon": -0.819740,
+        "millesime": "2026",
+        "niveau_code": 1
+    },
+    {
+        "lat": 47.637361,
+        "lon": 1.602223,
+        "millesime": "2026",
+        "niveau_code": 2
+    },
+    {
+        "lat": 43.695432,
+        "lon": 0.574549,
+        "millesime": "2026",
+        "niveau_code": 3
+    }
+]

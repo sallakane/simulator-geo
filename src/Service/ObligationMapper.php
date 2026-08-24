@@ -85,6 +85,9 @@ final readonly class ObligationMapper
             ZonageResult::MOTIF_PARIS => "La carte d'exposition ne couvre pas la ville de Paris.",
             ZonageResult::MOTIF_HORS_METROPOLE => "La carte d'exposition couvre la France métropolitaine. "
                 .'Ce point est en dehors de son périmètre.',
+            // Hors métropole et Paris, l'absence de polygone est une réponse
+            // (« exposition nulle »), pas un hors-périmètre : ce défaut ne
+            // devrait jamais servir.
             default => "La carte d'exposition ne renvoie aucune zone pour ce point.",
         };
     }

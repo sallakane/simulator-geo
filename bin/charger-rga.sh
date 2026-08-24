@@ -5,6 +5,8 @@
 #
 #   ./bin/charger-rga.sh                       # dev, millésime 2026
 #   ./bin/charger-rga.sh --prod --switch       # VPS, puis bascule de la vue
+#   ./bin/charger-rga.sh --bascule             # met en service, sans recharger
+#   ./bin/charger-rga.sh --points              # regénère le jeu de test (§10)
 #   ./bin/charger-rga.sh --millesime 2029 --shp data/Expo_2029_L93.shp --srs EPSG:2154
 #
 # Le chargement se fait dans rga_zone_<millesime>. La bascule de la vue
@@ -19,6 +21,7 @@ SHP=""
 ENCODING="${SHP_ENCODING:-LATIN1}"   # dépend du .dbf réel — relevé en §4.1
 S_SRS="${SHP_SRS:-EPSG:2154}"        # Lambert 93 annoncé par la source — à confirmer en §4.1
 SWITCH=0
+BASCULE_SEULE=0
 POINTS=0
 COMPOSE=(docker compose)
 
@@ -30,7 +33,8 @@ while [ $# -gt 0 ]; do
     --encoding)   ENCODING="$2"; shift 2 ;;
     --srs)        S_SRS="$2"; shift 2 ;;
     --switch)     SWITCH=1; shift ;;
-    --points)     POINTS=1; shift ;;
+    --bascule)    SWITCH=1; BASCULE_SEULE=1; shift ;;
+    --points)     POINTS=1; shift ;;   # action autonome : lit rga_zone_courante
     -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
@@ -50,6 +54,64 @@ PGDB_="${POSTGRES_DB:-zonage}"
 
 psql_() { "${COMPOSE[@]}" exec -T database psql -U "$PGUSER_" -d "$PGDB_" -v ON_ERROR_STOP=1 "$@"; }
 say()   { printf '\n\033[1m→ %s\033[0m\n' "$*"; }
+
+# Met le millésime en service. L'ancienne table est CONSERVÉE (traçabilité §4.4) :
+# on ne bascule qu'une vue.
+#
+# DROP + CREATE dans UNE transaction : atomique, donc sans fenêtre où la vue
+# n'existerait pas — le service continue de répondre pendant la bascule.
+# (CREATE OR REPLACE ne suffit pas : il refuse tout changement de type de
+# colonne, ce qui arrive dès que le millésime change de schéma.)
+#
+# Projection EXPLICITE et non SELECT * : c'est le contrat entre la donnée et le
+# code. Le shapefile peut changer de colonnes d'un millésime à l'autre, cette
+# vue ne doit pas.
+# Points de référence pour les tests : extraits de la donnée elle-même, jamais
+# devinés. ST_PointOnSurface garantit un point DANS le polygone, contrairement
+# au centroïde qui tombe dehors sur une forme concave (§10).
+#
+# Lecture sur la VUE : ce sont les points du millésime EN SERVICE qui font
+# référence, pas ceux d'une table chargée mais pas encore basculée.
+extraire_les_points() {
+  say "Points de référence → tests/fixtures/points-reference.json"
+  mkdir -p tests/fixtures
+  psql_ -At <<SQL > tests/fixtures/points-reference.json
+SELECT jsonb_pretty(jsonb_agg(p)) FROM (
+  SELECT DISTINCT ON (niveau_code)
+         niveau_code,
+         round(ST_Y(ST_PointOnSurface(geom))::numeric, 6) AS lat,
+         round(ST_X(ST_PointOnSurface(geom))::numeric, 6) AS lon,
+         millesime
+  FROM rga_zone_courante
+  WHERE niveau_code IS NOT NULL
+  ORDER BY niveau_code, ST_Area(geom) DESC
+) p;
+SQL
+}
+
+basculer_la_vue() {
+  say "Bascule de rga_zone_courante sur $TABLE"
+  psql_ <<SQL
+BEGIN;
+DROP VIEW IF EXISTS rga_zone_courante;
+CREATE VIEW rga_zone_courante AS
+    SELECT id, geom, niveau_code, niveau_libelle, millesime FROM $TABLE;
+COMMIT;
+SQL
+}
+
+# Bascule seule : la procédure §4.4 sépare volontairement le chargement (qu'on
+# vérifie) de la mise en service (qu'on décide). Recharger 121 000 polygones
+# pour changer une vue n'aurait aucun sens.
+if [ "$BASCULE_SEULE" = 1 ]; then
+  basculer_la_vue
+  exit 0
+fi
+
+if [ "$POINTS" = 1 ]; then
+  extraire_les_points
+  exit 0
+fi
 
 # ── 0. Le shapefile ──────────────────────────────────────────────────────────
 if [ -z "$SHP" ]; then
@@ -74,6 +136,11 @@ say "Shapefile : $BASE  ·  table cible : $TABLE  ·  SRS source : $S_SRS  ·  e
 # Chargement par ogr2ogr et non shp2pgsql : l'image postgis/postgis ne contient
 # pas ce dernier (vérifié), et GDAL fait le même travail — reprojection,
 # encodage, index GIST — avec l'outil qui a déjà servi à l'inspection.
+#
+# PRECISION=NO : les largeurs déclarées dans le .dbf sont fantaisistes. Le
+# millésime 2026 annonce `surf_m2` en Real(24.15), dont GDAL déduit un
+# NUMERIC(23,15) — incapable de stocker 1 474 098 685 m². Sans cette option, le
+# chargement s'arrête à 80 % sur un « numeric field overflow ».
 say "Chargement (ogr2ogr $S_SRS → EPSG:4326)…"
 "${COMPOSE[@]}" run --rm \
   -e TABLE="$TABLE" -e SHPFILE="/data/$BASE" -e ENC="$ENCODING" -e SSRS="$S_SRS" \
@@ -83,6 +150,7 @@ say "Chargement (ogr2ogr $S_SRS → EPSG:4326)…"
       -s_srs "$SSRS" -t_srs EPSG:4326 \
       -nln "$TABLE" -nlt MULTIPOLYGON -overwrite \
       -lco GEOMETRY_NAME=geom -lco FID=id -lco SPATIAL_INDEX=GIST \
+      -lco PRECISION=NO \
       --config SHAPE_ENCODING "$ENC" \
       -progress'
 
@@ -124,6 +192,19 @@ ANALYZE $TABLE;
 SQL
 
 # ── 3. Vérification (§4.4, §10) ──────────────────────────────────────────────
+# Complétude : c'est LE contrôle qui compte. En France métropolitaine, un point
+# sans polygone vaut « exposition nulle » (la carte ne dessine que les zones
+# exposées) : une donnée à moitié chargée répondrait donc « pas de risque » sur
+# des régions entières, en 200, sans rien signaler.
+ATTENDU=$("${COMPOSE[@]}" run --rm gis sh -c "ogrinfo -ro -so '/data/$BASE' -al 2>/dev/null | sed -n 's/^Feature Count: //p'" | tr -d '\r\n ')
+CHARGE=$(psql_ -At -c "SELECT count(*) FROM $TABLE" | tr -d '\r\n ')
+if [ -n "$ATTENDU" ] && [ "$ATTENDU" != "$CHARGE" ]; then
+  printf '\n\033[1;31m✗ Chargement incomplet : %s polygones dans le shapefile, %s en base.\033[0m\n' "$ATTENDU" "$CHARGE" >&2
+  echo "  La vue rga_zone_courante n'est PAS basculée. Relancer le chargement." >&2
+  exit 1
+fi
+say "Complétude : $CHARGE polygones, conforme au shapefile"
+
 say "Vérification"
 psql_ <<SQL
 \\echo '-- Répartition par niveau (NULL = mapping manquant ou incomplet)'
@@ -136,33 +217,11 @@ SELECT
 SQL
 
 if [ "$SWITCH" = 1 ]; then
-  say "Bascule de rga_zone_courante sur $TABLE"
-  # L'ancienne table est CONSERVÉE (traçabilité §4.4) : on ne bascule qu'une vue.
-  psql_ -c "CREATE OR REPLACE VIEW rga_zone_courante AS SELECT * FROM $TABLE;"
+  basculer_la_vue
 else
   echo
   echo "Vue rga_zone_courante inchangée. Après vérification ET passage du jeu de"
   echo "test de non-régression (§10) : ./bin/charger-rga.sh --switch --millesime $MILLESIME"
-fi
-
-if [ "$POINTS" = 1 ]; then
-  # Points de référence pour les tests : extraits de la donnée elle-même, jamais
-  # devinés. ST_PointOnSurface garantit un point DANS le polygone, contrairement
-  # au centroïde qui tombe dehors sur une forme concave (§10).
-  say "Points de référence → tests/fixtures/points-reference.json"
-  mkdir -p tests/fixtures
-  psql_ -At <<SQL > tests/fixtures/points-reference.json
-SELECT json_agg(p)::text FROM (
-  SELECT DISTINCT ON (niveau_code)
-         niveau_code,
-         round(ST_Y(ST_PointOnSurface(geom))::numeric, 6) AS lat,
-         round(ST_X(ST_PointOnSurface(geom))::numeric, 6) AS lon,
-         '$MILLESIME' AS millesime
-  FROM $TABLE
-  WHERE niveau_code IS NOT NULL
-  ORDER BY niveau_code, ST_Area(geom) DESC
-) p;
-SQL
 fi
 
 say "Terminé."

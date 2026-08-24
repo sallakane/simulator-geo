@@ -18,7 +18,7 @@ COMPOSE := docker compose --env-file .env --env-file .env.local
 APP     := $(COMPOSE) exec app
 
 .DEFAULT_GOAL := help
-.PHONY: help up down fresh build logs sh psql migrate test composer rga zonage-demo ogrinfo points
+.PHONY: help up down fresh build logs sh psql migrate test composer rga zonage-demo verifier ogrinfo points
 
 help: ## Liste les cibles
 	@grep -hE '^[a-z.-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -62,9 +62,19 @@ test: ## PHPUnit (crée et migre la base de test au besoin)
 	$(APP) php bin/console doctrine:migrations:migrate --env=test --no-interaction -q
 	$(APP) php bin/phpunit
 
-zonage-demo: ## Charge un zonage synthétique (4 carrés en Essonne) — dev sans les 600 Mo
+zonage-demo: ## Charge un zonage synthétique (3 carrés en Essonne) — dev sans les 400 Mo
+	@n=$$($(COMPOSE) exec -T database psql -U app -d zonage -Atc "SELECT count(*) FROM information_schema.tables WHERE table_name ~ '^rga_zone_[0-9]{4}$$'" | tr -d '\r'); \
+	if [ "$$n" != "0" ] && [ "$(FORCE)" != "1" ]; then \
+	  echo "⚠ Un millésime officiel est chargé : le remplacer par 3 carrés se verrait mal en production."; \
+	  echo "  Forcer     : make zonage-demo FORCE=1"; \
+	  echo "  Revenir au réel : ./bin/charger-rga.sh --millesime <AAAA> --bascule"; \
+	  exit 1; \
+	fi
 	$(COMPOSE) exec -T database psql -U app -d zonage -q -v ON_ERROR_STOP=1 < tests/fixtures/zonage-synthetique.sql
 	@echo "→ zonage synthétique en place ; le vrai millésime se charge avec make rga"
+
+verifier: ## Rejoue le jeu de points de référence contre le zonage en service (SPEC §10)
+	$(APP) php bin/console app:zonage:verifier
 
 composer: ## Composer dans le conteneur — ex. make composer c="require foo/bar"
 	$(APP) composer $(c)

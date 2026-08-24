@@ -45,7 +45,7 @@ final class ObligationMapperTest extends TestCase
     {
         $messages = array_map(
             fn (string $motif) => $this->mapper->messageHorsPerimetre($motif),
-            [ZonageResult::MOTIF_PARIS, ZonageResult::MOTIF_HORS_METROPOLE, ZonageResult::MOTIF_NON_COUVERT],
+            [ZonageResult::MOTIF_PARIS, ZonageResult::MOTIF_HORS_METROPOLE],
         );
 
         self::assertSame($messages, array_unique($messages), 'un message générique gaspillerait le trafic');

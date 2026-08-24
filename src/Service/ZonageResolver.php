@@ -59,17 +59,27 @@ final readonly class ZonageResolver
             return ZonageResult::zone((int) $ligne['niveau_code'], $ligne['millesime'] ?? null);
         }
 
-        return ZonageResult::horsPerimetre($this->motif($point));
+        return $this->interpreterLAbsenceDePolygone($point);
     }
 
     /**
-     * Aucun polygone : reste à dire POURQUOI, parce que le message et l'appel à
-     * l'action en dépendent (SPEC §1).
+     * Aucun polygone ne contient le point. Trois lectures possibles, et le
+     * message comme l'appel à l'action en dépendent (SPEC §1).
+     *
+     * La carte officielle ne dessine QUE les zones exposées : 395 000 km²
+     * couverts pour ~552 000 km² de métropole, et aucun polygone de niveau 0
+     * (relevé du millésime 2026, cf. docs/donnees-rga.md). En France
+     * métropolitaine, hors Paris, l'absence de polygone est donc une RÉPONSE —
+     * « pas d'exposition identifiée » — et pas un trou dans la donnée.
+     *
+     * C'est aussi pourquoi bin/charger-rga.sh contrôle le nombre de polygones
+     * chargé : une donnée partiellement chargée ferait répondre « pas de
+     * risque » sur des régions entières, sans la moindre erreur HTTP.
      */
-    private function motif(Coordonnees $point): string
+    private function interpreterLAbsenceDePolygone(Coordonnees $point): ZonageResult
     {
         if (!$point->estDansLaMetropole()) {
-            return ZonageResult::MOTIF_HORS_METROPOLE;
+            return ZonageResult::horsPerimetre(ZonageResult::MOTIF_HORS_METROPOLE);
         }
 
         // La carte ne couvre pas la ville de Paris : ce n'est pas un trou dans
@@ -78,9 +88,29 @@ final readonly class ZonageResolver
         // que le widget le transmettra.
         if ($point->lon >= self::PARIS_LON_MIN && $point->lon <= self::PARIS_LON_MAX
             && $point->lat >= self::PARIS_LAT_MIN && $point->lat <= self::PARIS_LAT_MAX) {
-            return ZonageResult::MOTIF_PARIS;
+            return ZonageResult::horsPerimetre(ZonageResult::MOTIF_PARIS);
         }
 
-        return ZonageResult::MOTIF_NON_COUVERT;
+        // Limite assumée : l'enveloppe métropolitaine est un rectangle, elle
+        // déborde sur la Belgique, la Suisse, l'Italie et l'Espagne. Une adresse
+        // frontalière étrangère recevrait « pas d'exposition identifiée » au
+        // lieu de « hors périmètre ». Dans le parcours réel, les coordonnées
+        // viennent de la Base Adresse Nationale, qui ne géocode que la France
+        // (SPEC §7) ; à revoir si l'API est ouverte plus largement.
+        return ZonageResult::zone(0, $this->millesimeCourant());
+    }
+
+    /**
+     * Tous les polygones d'un millésime portent la même valeur : un LIMIT 1
+     * sans tri suffit, et cette requête ne part que sur le chemin « exposition
+     * nulle ».
+     */
+    private function millesimeCourant(): ?string
+    {
+        try {
+            return $this->db->fetchOne('SELECT millesime FROM rga_zone_courante LIMIT 1') ?: null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

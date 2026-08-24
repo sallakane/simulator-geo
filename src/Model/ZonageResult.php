@@ -16,7 +16,6 @@ final readonly class ZonageResult
 {
     public const MOTIF_PARIS = 'paris';
     public const MOTIF_HORS_METROPOLE = 'hors_metropole';
-    public const MOTIF_NON_COUVERT = 'non_couvert';
 
     private function __construct(
         public ?int $niveauCode,

@@ -29,7 +29,9 @@ final class ZonageEndpointTest extends ApiTestCase
         yield 'exposition forte' => [48.65, 2.40, 'fort', 'G1 PGC'];
         yield 'exposition moyenne' => [48.65, 2.50, 'moyen', 'G1 PGC'];
         yield 'exposition faible' => [48.65, 2.60, 'faible', 'G2 AVP'];
-        yield 'exposition nulle' => [48.65, 2.70, 'nul', 'G2 AVP'];
+        // Aucun polygone à cet endroit : c'est précisément ce qui vaut
+        // « exposition nulle » dans la donnée officielle.
+        yield 'exposition nulle' => [48.65, 2.75, 'nul', 'G2 AVP'];
     }
 
     #[DataProvider('pointsDuZonage')]
@@ -50,7 +52,7 @@ final class ZonageEndpointTest extends ApiTestCase
         self::assertTrue($this->zonage(48.65, 2.40)['obligation']['applicable'], 'fort');
         self::assertTrue($this->zonage(48.65, 2.50)['obligation']['applicable'], 'moyen');
         self::assertFalse($this->zonage(48.65, 2.60)['obligation']['applicable'], 'faible');
-        self::assertFalse($this->zonage(48.65, 2.70)['obligation']['applicable'], 'nul');
+        self::assertFalse($this->zonage(48.65, 2.75)['obligation']['applicable'], 'nul');
     }
 
     /**
@@ -80,10 +82,29 @@ final class ZonageEndpointTest extends ApiTestCase
         self::assertNotNull($reponse['simulation_id'], 'la simulation est mesurée même hors périmètre');
     }
 
-    public function testHorsMetropoleEstDistingueDuNonCouvert(): void
+    public function testHorsMetropoleResteUnHorsPerimetre(): void
     {
-        self::assertSame('hors_metropole', $this->zonage(40.71, -74.01)['motif'], 'New York');
-        self::assertSame('non_couvert', $this->zonage(43.30, 5.40)['motif'], 'Marseille, hors zonage synthétique');
+        $reponse = $this->zonage(40.71, -74.01);
+
+        self::assertSame('hors_perimetre', $reponse['statut'], 'New York');
+        self::assertSame('hors_metropole', $reponse['motif']);
+    }
+
+    /**
+     * En métropole, l'absence de polygone n'est PAS un hors-périmètre : la
+     * carte officielle ne dessine que les zones exposées, sans aucun polygone
+     * de niveau 0. Répondre « hors périmètre » ici priverait de réponse les
+     * ~28 % du territoire non exposés (SPEC §1 : aucune réponse ne doit être un
+     * cul-de-sac).
+     */
+    public function testEnMetropoleLAbsenceDePolygoneVautExpositionNulle(): void
+    {
+        $reponse = $this->zonage(43.30, 5.40);
+
+        self::assertSame('ok', $reponse['statut'], 'Marseille, hors des carrés de la fixture');
+        self::assertSame('nul', $reponse['zone']['cle']);
+        self::assertFalse($reponse['obligation']['applicable']);
+        self::assertSame('demo', $reponse['millesime'], 'le millésime reste renseigné');
     }
 
     /**

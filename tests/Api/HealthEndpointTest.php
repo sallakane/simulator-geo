@@ -18,7 +18,7 @@ final class HealthEndpointTest extends ApiTestCase
         self::assertResponseIsSuccessful();
         self::assertSame('ok', $reponse['status']);
         self::assertSame('demo', $reponse['rga_millesime']);
-        self::assertSame(4, $reponse['polygones']);
+        self::assertSame(3, $reponse['polygones']);
     }
 
     /**
