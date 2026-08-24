@@ -22,6 +22,7 @@ abstract class ApiTestCase extends WebTestCase
 {
     protected const CLE = 'pk_test';
     protected const ORIGINE = 'https://exemple-partenaire.fr';
+    protected const FORMULAIRE = 'https://exemple-partenaire.fr/demande-devis';
 
     protected KernelBrowser $client;
 
@@ -29,7 +30,7 @@ abstract class ApiTestCase extends WebTestCase
     {
         $this->client = static::createClient();
 
-        $this->db()->executeStatement('TRUNCATE lead, simulation, partner RESTART IDENTITY CASCADE');
+        $this->db()->executeStatement('TRUNCATE simulation, partner RESTART IDENTITY CASCADE');
 
         // Les compteurs de débit survivent d'un test à l'autre (cache
         // partagé) : sans remise à zéro, le 15e test se prendrait le 429 du
@@ -60,7 +61,17 @@ abstract class ApiTestCase extends WebTestCase
         $em = static::getContainer()->get(EntityManagerInterface::class);
 
         $partner = new Partner(self::CLE, 'Partenaire de test');
-        $partner->setActif($actif)->setOriginesAutorisees([self::ORIGINE, 'https://*.exemple-partenaire.fr']);
+        $partner
+            ->setActif($actif)
+            ->setOriginesAutorisees([self::ORIGINE, 'https://*.exemple-partenaire.fr'])
+            ->setLeadEndpoint(self::FORMULAIRE)
+            ->setLeadChamps([
+                'rue' => 'rue',
+                'code_postal' => 'code_postal',
+                'ville' => 'ville',
+                'message' => 'description_de_la_demande',
+                'simulation' => 'simulation_id',
+            ]);
 
         $em->persist($partner);
         $em->flush();

@@ -20,8 +20,9 @@ framework:
             policy: 'sliding_window'
             limit: 600
             interval: '1 minute'
-        # Formulaire de devis (lot 3) : 5 par minute et par IP.
-        lead_ip:
+        # Clic vers le formulaire de devis : 5 par minute et par IP. Un
+        # visiteur normal en fait un, peut-être deux.
+        conversion_ip:
             policy: 'sliding_window'
             limit: 5
             interval: '1 minute'

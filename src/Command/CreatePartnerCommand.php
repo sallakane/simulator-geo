@@ -38,8 +38,11 @@ final class CreatePartnerCommand extends Command
             ->addArgument('nom', InputArgument::REQUIRED, 'Nom du partenaire')
             ->addOption('origine', 'o', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY,
                 'Origine autorisée, répétable (ex. https://exemple.fr ou https://*.exemple.fr)')
-            ->addOption('lead-endpoint', null, InputOption::VALUE_REQUIRED, 'URL du webform destinataire des leads')
-            ->addOption('lead-email', null, InputOption::VALUE_REQUIRED, 'Adresse de repli si le relais échoue')
+            ->addOption('formulaire', null, InputOption::VALUE_REQUIRED,
+                'URL du formulaire de devis du partenaire, vers lequel le widget redirige')
+            ->addOption('champ', 'c', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY,
+                'Correspondance nom_logique=champ_du_formulaire, répétable. '
+                .'Noms logiques : rue, code_postal, ville, message, simulation')
             ->addOption('cle', null, InputOption::VALUE_REQUIRED, 'Clé publique imposée (tests) ; générée sinon');
     }
 
@@ -60,11 +63,22 @@ final class CreatePartnerCommand extends Command
 
         $origines = $input->getOption('origine');
 
+        $champs = [];
+        foreach ($input->getOption('champ') as $paire) {
+            if (!str_contains($paire, '=')) {
+                $io->error("Correspondance invalide : « $paire ». Attendu : nom_logique=champ_du_formulaire");
+
+                return Command::FAILURE;
+            }
+            [$logique, $reel] = explode('=', $paire, 2);
+            $champs[trim($logique)] = trim($reel);
+        }
+
         $partner = new Partner($cle, $input->getArgument('nom'));
         $partner
             ->setOriginesAutorisees($origines)
-            ->setLeadEndpoint($input->getOption('lead-endpoint'))
-            ->setLeadEmail($input->getOption('lead-email'));
+            ->setLeadEndpoint($input->getOption('formulaire'))
+            ->setLeadChamps($champs);
 
         $this->em->persist($partner);
         $this->em->flush();
@@ -73,7 +87,16 @@ final class CreatePartnerCommand extends Command
         $io->definitionList(
             ['Clé publique' => $cle],
             ['Origines' => $origines ? implode(', ', $origines) : '(aucune — les appels navigateur seront refusés)'],
+            ['Formulaire' => $partner->getLeadEndpoint() ?? '(aucun — pas de redirection)'],
+            ['Champs' => $champs ? json_encode($champs, \JSON_UNESCAPED_SLASHES) : '(aucun)'],
         );
+
+        if (null !== $partner->getLeadEndpoint() && [] === $champs) {
+            $io->warning(
+                'Formulaire renseigné sans aucune correspondance de champs : la redirection aura lieu '
+                ."mais n'emportera aucun contexte, et le lead ne sera pas qualifié (SPEC §1)."
+            );
+        }
 
         if (!$origines) {
             $io->warning(

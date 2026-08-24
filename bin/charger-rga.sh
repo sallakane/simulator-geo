@@ -185,6 +185,11 @@ else
 MSG
 fi
 
+# ogr2ogr crée un schéma `ogr_system_tables` (métadonnées de couches) via un
+# event trigger. On ne s'en sert pas, et Doctrine l'introspecte : sans ce
+# nettoyage, `doctrine:migrations:diff` propose de le supprimer à chaque fois.
+psql_ -q -c 'DROP SCHEMA IF EXISTS ogr_system_tables CASCADE;'
+
 say "Index GIST + statistiques…"
 psql_ <<SQL
 CREATE INDEX IF NOT EXISTS idx_${TABLE}_geom ON $TABLE USING GIST(geom);

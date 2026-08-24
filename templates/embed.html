@@ -69,6 +69,7 @@
     cursor: pointer; text-decoration: none;
   }
   .cta:hover { filter: brightness(1.08); }
+  a.cta { text-align: center; }
 
   .mentions { margin: 14px 0 0; font-size: .75rem; color: var(--texte-doux); }
   .mentions p { margin: 0 0 4px; }
@@ -286,17 +287,90 @@
     }
   }
 
-  function bouton(libelle) {
-    var b = document.createElement('button');
-    b.type = 'button';
+  /**
+   * Construit l'URL du formulaire du partenaire, pré-remplie.
+   *
+   * Les noms de champs viennent de la réponse de l'API (`conversion.champs`),
+   * pas du code : ce widget sert plusieurs partenaires, dont les formulaires
+   * n'ont aucune raison d'avoir les mêmes champs (SPEC §15).
+   */
+  function lienDevis(conversion, feature, simulationId) {
+    if (!conversion || !conversion.url) { return null; }
+
+    var champs = conversion.champs || {};
+    var p = feature ? feature.properties : {};
+    var url = new URL(conversion.url);
+
+    // L'adresse ne vient PAS de l'API : elle est restée dans le navigateur d'un
+    // bout à l'autre (SPEC §9).
+    var valeurs = {
+      rue: p.name || '',
+      code_postal: p.postcode || '',
+      ville: p.city || '',
+      simulation: simulationId ? String(simulationId) : '',
+      message: message(conversion, p)
+    };
+
+    Object.keys(champs).forEach(function (logique) {
+      var valeur = valeurs[logique];
+      if (valeur) { url.searchParams.set(champs[logique], valeur); }
+    });
+
+    return url.toString();
+  }
+
+  function message(conversion, p) {
+    var lignes = [];
+    if (p && p.label) { lignes.push('Terrain situé ' + p.label + '.'); }
+    if (conversion.resume) { lignes.push(conversion.resume); }
+    lignes.push('— pré-rempli par le simulateur, à compléter.');
+    return lignes.join('\n');
+  }
+
+  function bouton(libelle, conversion, feature, simulationId) {
+    var lien = lienDevis(conversion, feature, simulationId);
+
+    // Sans formulaire configuré, on ne fabrique pas un bouton mort : le clic
+    // remonte au site hôte, qui branche ce qu'il veut.
+    var b = document.createElement(lien ? 'a' : 'button');
     b.className = 'cta';
     b.textContent = libelle;
-    // Le formulaire de devis arrive avec le lot 3 : d'ici là, le clic remonte
-    // au site hôte, qui peut y brancher son propre parcours.
+
+    if (lien) {
+      b.href = lien;
+      // _top et non _self : sans ça le formulaire s'ouvrirait DANS l'iframe,
+      // haute de quelques centaines de pixels. C'est la page hôte entière qui
+      // doit naviguer, dans le même onglet.
+      b.target = '_top';
+      // Un vrai lien : clic milieu, « ouvrir dans un onglet », copie de
+      // l'adresse — tout ce qu'un bouton en JavaScript casserait.
+      b.addEventListener('click', function () { signalerConversion(simulationId); });
+      return b;
+    }
+
+    b.type = 'button';
     b.addEventListener('click', function () {
       parent.postMessage({ type: 'zonage:conversion' }, '*');
     });
     return b;
+  }
+
+  /**
+   * Le lead partant chez le partenaire, on ne saura jamais qu'il a été ENVOYÉ,
+   * seulement qu'il a été ENTAMÉ. C'est ce qu'on enregistre — un taux de clic
+   * honnête plutôt qu'un taux de conversion inventé (SPEC §5).
+   *
+   * sendBeacon : la requête survit à la navigation qui suit immédiatement.
+   */
+  function signalerConversion(simulationId) {
+    if (!simulationId || !navigator.sendBeacon) { return; }
+    try {
+      var corps = new Blob(
+        [JSON.stringify({ key: config.cle, simulation_id: simulationId })],
+        { type: 'text/plain' } // requête « simple » : pas de préflight
+      );
+      navigator.sendBeacon(config.api + '/api/v1/conversion', corps);
+    } catch (e) { /* la mesure ne doit jamais empêcher la conversion */ }
   }
 
   function afficherVerdict(donnees, feature) {
@@ -313,7 +387,7 @@
       h.appendChild(m);
       // Jamais de cul-de-sac : même hors périmètre, on propose une suite
       // (SPEC §1).
-      h.appendChild(bouton('Nous contacter'));
+      h.appendChild(bouton('Nous contacter', donnees.conversion, feature, donnees.simulation_id));
       resultat.appendChild(h);
       annoncerHauteur();
       return;
@@ -346,7 +420,7 @@
       v.appendChild(p);
     }
 
-    v.appendChild(bouton(textes.cta));
+    v.appendChild(bouton(textes.cta, donnees.conversion, feature, donnees.simulation_id));
     resultat.appendChild(v);
     annoncerHauteur();
   }
@@ -363,7 +437,9 @@
     p.textContent = 'Votre projet reste réalisable : contactez-nous, nous ferons le point sur '
       + 'les études nécessaires pour votre terrain.';
     d.appendChild(p);
-    d.appendChild(bouton('Nous contacter'));
+    // En panne, on n'a ni contexte ni simulation : le bouton se contente de
+    // prévenir la page hôte.
+    d.appendChild(bouton('Nous contacter', null, null, null));
     resultat.appendChild(d);
     annoncerHauteur();
   }

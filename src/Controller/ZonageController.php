@@ -9,6 +9,7 @@ use App\Exception\ApiProblemException;
 use App\Model\Coordonnees;
 use App\Security\OriginValidator;
 use App\Service\ObligationMapper;
+use App\Service\LienDevis;
 use App\Service\PartnerResolver;
 use App\Service\ZonageResolver;
 use Doctrine\ORM\EntityManagerInterface;
@@ -34,6 +35,7 @@ final class ZonageController
         private readonly OriginValidator $origines,
         private readonly ZonageResolver $zonage,
         private readonly ObligationMapper $obligations,
+        private readonly LienDevis $lienDevis,
         private readonly EntityManagerInterface $em,
         #[Target('zonage_ip')]
         private readonly RateLimiterFactoryInterface $limiteurIp,
@@ -73,6 +75,11 @@ final class ZonageController
         $this->em->persist($simulation);
         $this->em->flush();
 
+        // Présent dans les DEUX cas : hors périmètre, le visiteur doit lui
+        // aussi pouvoir demander conseil. Aucune réponse n'est un cul-de-sac
+        // (SPEC §1).
+        $conversion = $this->lienDevis->pour($partner, $resultat->niveauCode, $resultat->millesime);
+
         if ($resultat->estHorsPerimetre()) {
             $charge = [
                 'statut' => 'hors_perimetre',
@@ -89,6 +96,10 @@ final class ZonageController
                 'millesime' => $resultat->millesime,
                 'simulation_id' => $simulation->getId(),
             ];
+        }
+
+        if (null !== $conversion) {
+            $charge['conversion'] = $conversion;
         }
 
         return $this->cors(new JsonResponse($charge), $origine);

@@ -70,7 +70,7 @@ spécifique au client passe par la table `partner` (voir §5).
 | Framework | Symfony 7.x | |
 | Base | PostgreSQL 16 + PostGIS 3.4 | Requête point-dans-polygone |
 | ORM | Doctrine, + SQL natif pour le spatial | Doctrine ne gère pas PostGIS nativement |
-| File d'attente | Symfony Messenger (transport Doctrine) | Relais de leads avec réessai |
+| File d'attente | Symfony Messenger (transport Doctrine) | ⚠️ **Sans emploi** depuis que le lead ne transite plus par ce serveur (§5). Installé, configuré, mais plus rien à consommer. |
 | Front widget | JavaScript sans framework | Poids < 15 Ko, zéro dépendance |
 | Runtime HTTP | FrankenPHP (Caddy + PHP embarqués) | Une image, un process ; même binaire en dev et en prod |
 | Conteneurisation | Docker Compose, en dev **et** en prod | PostGIS ne s'installe pas proprement à la main ; parité dev/prod |
@@ -281,8 +281,8 @@ nom                 varchar(120)
 actif               boolean
 origines_autorisees jsonb                -- ["https://atlantis-geotechnique.fr"]
 theme               varchar(40)
-lead_endpoint       varchar(255)         -- URL du webform destinataire
-lead_email          varchar(180)         -- copie de secours
+lead_endpoint       varchar(255)         -- URL du formulaire de devis DU PARTENAIRE
+lead_champs         jsonb                -- {"rue":"rue","message":"description_de_la_demande"}
 created_at          timestamptz
 ```
 
@@ -290,6 +290,9 @@ C'est cette table qui rend le produit revendable. Aucune valeur spécifique à u
 client ne doit exister ailleurs.
 
 ### `simulation` — mesure, sans donnée personnelle
+
+C'est désormais la **seule** table qui garde une trace d'un visiteur, et elle
+n'en garde volontairement pas assez pour en désigner un.
 
 ```
 id            bigserial PK
@@ -304,21 +307,28 @@ created_at    timestamptz
 Aucun nom, aucun e-mail, aucune adresse complète. Permet de mesurer le taux de
 conversion par zone et par partenaire.
 
-### `lead` — rétention minimale
+### Pas de table `lead`
 
-```
-id             bigserial PK
-partner_id     int FK
-simulation_id  bigint FK
-payload        jsonb              -- chiffré au repos
-statut         varchar(20)        -- pending | delivered | failed
-tentatives     smallint
-delivered_at   timestamptz
-created_at     timestamptz
-```
+**Le lead ne transite pas par ce serveur.** Le widget construit l'URL du
+formulaire du partenaire, pré-remplie, et le visiteur le remplit chez lui.
 
-**Purge automatique à J+30 après livraison réussie** (commande planifiée). Le
-destinataire final des données est le partenaire ; on ne fait que relayer.
+La première version de ce document prévoyait de collecter les demandes, de les
+relayer et de les purger à J+30. Cette table n'existe plus, et avec elle ont
+disparu le chiffrement au repos, le relais avec réessai, le repli e-mail, la
+commande de purge — et le statut de sous-traitant au sens de l'article 28
+(§9). Le risque le plus lourd du produit a été **supprimé**, pas géré.
+
+Ce qui rend la redirection générique : `partner.lead_champs`, la correspondance
+entre nos noms logiques (`rue`, `code_postal`, `ville`, `message`,
+`simulation`) et les champs réels du formulaire du partenaire. Écrire
+`description_de_la_demande` dans un service reviendrait à coder en dur le
+formulaire d'un client (§15).
+
+Ce qu'on perd, et qu'il faut assumer : on ne saura jamais qu'une demande a été
+**envoyée**, seulement qu'elle a été **entamée** (`simulation.converti`). Un
+taux de clic honnête vaut mieux qu'un taux de conversion inventé. Le
+`simulation_id` voyage dans un champ caché du formulaire : le partenaire peut
+recoller les deux quand il le veut.
 
 ---
 
@@ -353,9 +363,28 @@ Base : `https://api.zonage.sallakane.cloud`
     "resume": "Pour la vente d'un terrain non bâti constructible, l'étude géotechnique préalable G1 doit être annexée à la promesse ou à l'acte de vente."
   },
   "millesime": "2026",
-  "simulation_id": 48213
+  "simulation_id": 48213,
+  "conversion": {
+    "url": "https://atlantis-geotechnique.fr/demande-devis",
+    "champs": {
+      "rue": "rue",
+      "code_postal": "code_postal",
+      "ville": "ville",
+      "message": "description_de_la_demande",
+      "simulation": "simulation_id"
+    },
+    "resume": "Exposition forte au retrait-gonflement des argiles (carte 2026, arrêté du 9 janvier 2026).\nÉtude géotechnique préalable G1 PGC applicable (norme NF P 94-500)."
+  }
 }
 ```
+
+Le bloc `conversion` est **absent** si le partenaire n'a pas de formulaire
+déclaré : le widget saura alors ne pas fabriquer de lien mort. Il est en
+revanche présent **aussi** dans la réponse `hors_perimetre` — le visiteur doit
+pouvoir demander conseil (§1).
+
+`resume` ne contient pas l'adresse : elle est restée dans le navigateur d'un
+bout à l'autre, et n'a aucune raison de passer par nos journaux (§9).
 
 **200 — hors périmètre** (Paris, DOM, hors métropole)
 
@@ -376,26 +405,22 @@ autorisée · **429** quota dépassé.
 
 Toutes les erreurs suivent RFC 7807 (`application/problem+json`).
 
-### `POST /api/v1/lead`
+### `POST /api/v1/conversion`
 
 ```json
-{
-  "key": "pk_...",
-  "simulation_id": 48213,
-  "nom": "…", "telephone": "…", "email": "…",
-  "type_projet": "vente_terrain",
-  "adresse": "12 rue des Vignes, 91130 Ris-Orangis",
-  "message": "…"
-}
+{ "key": "pk_...", "simulation_id": 48213 }
 ```
 
-Réponse **202 Accepted** immédiate. Le relais vers le webform du partenaire est
-asynchrone (Messenger), avec réessai exponentiel et repli e-mail après trois
-échecs.
+Réponse **204**. Marque `simulation.converti`. Appelé par `navigator.sendBeacon`
+au moment du clic, juste avant que le navigateur quitte la page : corps en
+`text/plain`, donc requête « simple » au sens CORS — pas de préflight, et rien
+à attendre côté client.
 
-Validation : au moins un moyen de contact (téléphone **ou** e-mail), pot de
-miel + horodatage de formulaire contre les robots. Pas de captcha au premier
-jour : mesurer d'abord le volume de spam réel.
+Une simulation appartenant à un autre partenaire est refusée comme une
+simulation inconnue : sinon cet endpoint permettrait de dénombrer les
+simulations des voisins.
+
+**Aucune donnée personnelle** : un identifiant de simulation, rien d'autre.
 
 ### `GET /api/v1/health`
 
@@ -464,17 +489,28 @@ Trois messages, tous émis par l'iframe :
 |---|---|
 | `zonage:pret` | Le simulateur est monté. **Tant qu'il n'arrive pas, le repli statique reste affiché** — c'est là que se joue la dégradation gracieuse. |
 | `zonage:hauteur` | Hauteur à appliquer à l'iframe, à chaque changement de contenu. |
-| `zonage:conversion` | L'utilisateur a cliqué l'appel à l'action. Le site hôte peut y brancher son propre parcours. |
+| `zonage:conversion` | L'utilisateur a cliqué l'appel à l'action **alors qu'aucun formulaire n'est déclaré** pour le partenaire. Le site hôte branche ce qu'il veut. |
 
 Le chargeur n'accepte que les messages venant de l'origine du service **et** de
 sa propre iframe : une page hôte peut contenir d'autres cadres, et n'importe
 qui peut poster un message.
 
-### Ce qui reste au lot 3
+### L'appel à l'action
 
-Le formulaire de devis pré-rempli et son envoi (`POST /api/v1/lead`). D'ici là,
-l'appel à l'action émet `zonage:conversion` : le parcours ne s'arrête donc pas
-sur un bouton mort, et le site hôte garde la main.
+Quand le partenaire a déclaré un formulaire, l'appel à l'action est un **vrai
+lien** (`<a href target="_top">`) vers ce formulaire, pré-rempli par paramètres
+d'URL. Trois conséquences, toutes voulues :
+
+- `target="_top"` et non `_self` : sans lui, le formulaire s'ouvrirait **dans
+  l'iframe**, haute de quelques centaines de pixels ;
+- un lien et non un bouton JavaScript : clic milieu, « ouvrir dans un nouvel
+  onglet », copie de l'adresse — tout ce qu'un `<button>` casserait ;
+- le clic déclenche un `sendBeacon` vers `/api/v1/conversion`, qui survit à la
+  navigation. La mesure ne doit jamais empêcher la conversion : si elle échoue,
+  le lien part quand même.
+
+Sans formulaire déclaré, pas de lien mort : on retombe sur le message
+`zonage:conversion` vers la page hôte.
 
 ---
 
@@ -547,19 +583,39 @@ supervision sur la date d'expiration, pas seulement le cron).
 
 ## 9. RGPD
 
-Les demandes de devis transitent par ce serveur : l'éditeur est **sous-traitant**
-du partenaire au sens de l'article 28. Un contrat de sous-traitance est requis
-avant la mise en production.
+**Aucune donnée personnelle ne transite par ce serveur.**
 
-Mesures techniques attendues :
+Le visiteur remplit le formulaire **du partenaire**, sur le **domaine du
+partenaire**. Le simulateur ne fait que construire l'URL pré-remplie ; le nom,
+le téléphone et l'e-mail ne nous atteignent jamais. L'adresse saisie non plus :
+elle vient de la Base Adresse Nationale, dans le navigateur, et repart dans le
+navigateur.
 
-- **VPS hébergé dans l'UE** — à vérifier avant d'écrire du code.
-- Données personnelles **relayées, pas conservées** : purge à J+30 après
-  livraison. Seule la table `simulation` (sans donnée personnelle) est
-  conservée pour la mesure.
-- `payload` chiffré au repos.
-- Journaux : IP tronquée, pas de donnée personnelle en clair.
-- Endpoint interne de suppression sur demande.
+Ce n'est pas une économie de code, c'est le cœur de la position juridique. Si
+les demandes transitaient ici, l'éditeur serait **sous-traitant au sens de
+l'article 28** : contrat de sous-traitance signé avant toute mise en
+production, chiffrement au repos, purge, endpoint de suppression, registre.
+En redirigeant, cette qualification tombe.
+
+Ce qui est conservé, et rien d'autre :
+
+- `simulation` — partenaire, coordonnées **arrondies à 4 décimales** (~11 m),
+  code commune, niveau d'exposition, indicateur de clic. Ni nom, ni e-mail, ni
+  adresse complète. C'est de la mesure, pas un fichier de prospects.
+
+Ce qui reste à surveiller :
+
+- **VPS hébergé dans l'UE** — toujours à vérifier : la table `simulation` y vit.
+- **Journaux** : IP tronquée, aucune donnée personnelle en clair. Le paramètre
+  `insee` (code commune) est la donnée la plus fine qui apparaisse dans nos
+  journaux.
+- **À dire au partenaire** : l'adresse du terrain part en clair dans la query
+  string de SON formulaire. Elle apparaîtra donc dans SES journaux et SON
+  analytics. C'est son domaine et sa responsabilité, mais il doit le savoir
+  avant la mise en ligne.
+- **Le contexte pré-rempli est éditable** par le visiteur. Le champ caché
+  `simulation_id` ne l'est pas : c'est lui qui fait foi si le partenaire veut
+  retrouver le zonage réellement calculé.
 
 ---
 
@@ -626,13 +682,14 @@ tests manuels sur la matrice de cas limites ci-dessus.
 src/
   Controller/
     ZonageController.php
-    LeadController.php        # lot 3
+    ConversionController.php  # marque le clic vers le formulaire du partenaire
     WidgetController.php      # /embed : valide la clé, pose la CSP, injecte la config
     HealthController.php
   Service/
     ZonageResolver.php        # SQL natif PostGIS, cœur métier
     ObligationMapper.php      # niveau_code → mission + textes réglementaires
     PartnerResolver.php       # résolution de la clé publique
+    LienDevis.php             # URL pré-remplie du formulaire du partenaire
   Model/
     Coordonnees.php           # validation + détection de permutation lat/lon
     ZonageResult.php
@@ -642,11 +699,7 @@ src/
     ApiProblemListener.php
   Command/
     CreatePartnerCommand.php  # app:partner:create — seule porte d'entrée client
-  Message/
-    RelayLead.php             # lot 3
-  MessageHandler/
-    RelayLeadHandler.php      # lot 3
-  Entity/                     # Partner, Simulation, Lead
+  Entity/                     # Partner, Simulation
   Security/
     OriginValidator.php
 public/
@@ -681,7 +734,6 @@ infra/
   Caddyfile.snippet           # bloc à coller dans le Caddyfile mutualisé (§8)
   simulateur-backup.sh
   simulateur-backup.cron
-  simulateur-purge.cron       # purge des leads J+30 (§5)
 .env                          # versionné, sans secret
 .env.local.example            # gabarit des secrets
 ```
@@ -892,7 +944,6 @@ est consignée dans `docs/exploitation.md`.
 | Quoi | Quand | Fichier |
 |---|---|---|
 | Sauvegarde de la base | 3 h 40 | `infra/simulateur-backup.cron` |
-| Purge des leads livrés à J+30 (§9) | 4 h 10 | `infra/simulateur-purge.cron` |
 | Renouvellement TLS | automatique (Caddy) | supervision de la date d'expiration (§8) |
 
 ### Supervision
@@ -927,14 +978,22 @@ les quatre niveaux, dégradation gracieuse, accessibilité.
 *Terminé quand :* le parcours complet fonctionne sur une page de test, et que
 le simulateur coupé laisse le repli statique en place.
 
-### Lot 3 — Leads et mesure
+### Lot 3 — Conversion et mesure
 
-`POST /api/v1/lead`, relais Messenger, réessai, repli e-mail, table
-`simulation`, tableau de bord de conversion, purge J+30.
+Redirection vers le formulaire du partenaire, pré-rempli par paramètres d'URL
+(`partner.lead_endpoint` + `lead_champs`), `POST /api/v1/conversion`, table
+`simulation`.
 
-*Terminé quand :* une demande envoyée depuis le widget arrive dans le webform
-destinataire, et qu'une coupure du destinataire déclenche bien le réessai puis
-le repli.
+*Terminé quand :* un clic depuis le widget ouvre le formulaire du partenaire
+avec l'adresse, la zone et la mission déjà remplies, et que `simulation.converti`
+bascule.
+
+> Ce lot a été **redéfini en cours de route**. Il prévoyait de collecter les
+> demandes et de les relayer ; le partenaire disposait déjà d'un formulaire qui
+> fonctionne. Rediriger supprime la table `lead`, le relais, le réessai, le
+> repli e-mail, la purge — et le statut de sous-traitant (§9). Le tableau de
+> bord de conversion reste à faire, avec ce qu'on peut honnêtement mesurer :
+> des clics, pas des envois.
 
 ### Lot 4 — Mise en production
 

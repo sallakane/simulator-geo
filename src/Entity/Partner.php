@@ -43,13 +43,28 @@ class Partner
     #[ORM\Column(length: 40, nullable: true)]
     private ?string $theme = null;
 
-    /** URL du webform destinataire des leads (relais asynchrone, SPEC §6). */
+    /**
+     * URL du formulaire de devis DU PARTENAIRE, vers lequel le widget redirige
+     * avec le contexte en paramètres (SPEC §6).
+     *
+     * Vide = pas de redirection : l'appel à l'action se contente de prévenir la
+     * page hôte, qui branche ce qu'elle veut.
+     */
     #[ORM\Column(length: 255, nullable: true)]
     private ?string $leadEndpoint = null;
 
-    /** Copie de secours si le relais échoue trois fois. */
-    #[ORM\Column(length: 180, nullable: true)]
-    private ?string $leadEmail = null;
+    /**
+     * Correspondance entre nos noms logiques et les champs du formulaire du
+     * partenaire : `{"rue": "rue", "message": "description_de_la_demande"}`.
+     *
+     * C'est ce qui garde le code générique. Écrire ici « rue » ou
+     * « description_de_la_demande » dans un service reviendrait à coder en dur
+     * le formulaire d'un client (SPEC §15).
+     *
+     * @var array<string, string>
+     */
+    #[ORM\Column(type: Types::JSON)]
+    private array $leadChamps = [];
 
     #[ORM\Column(type: Types::DATETIMETZ_IMMUTABLE)]
     private \DateTimeImmutable $createdAt;
@@ -126,14 +141,16 @@ class Partner
         return $this;
     }
 
-    public function getLeadEmail(): ?string
+    /** @return array<string, string> */
+    public function getLeadChamps(): array
     {
-        return $this->leadEmail;
+        return $this->leadChamps;
     }
 
-    public function setLeadEmail(?string $email): self
+    /** @param array<string, string> $champs */
+    public function setLeadChamps(array $champs): self
     {
-        $this->leadEmail = $email;
+        $this->leadChamps = $champs;
 
         return $this;
     }
