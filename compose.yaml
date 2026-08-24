@@ -83,9 +83,11 @@ services:
       disable: true
     # Le worker tourne AUSSI en dev : un relais de lead qui ne fonctionne qu'en
     # production est un relais qu'on découvre cassé en production (SPEC §12).
-    # Pas de `restart` ici : tant que bin/console n'existe pas, il s'arrête au
-    # lieu de boucler dans les logs.
     command: ["php", "bin/console", "messenger:consume", "async", "-vv", "--time-limit=3600"]
+    # --time-limit fait sortir le worker toutes les heures (libère la mémoire) :
+    # sans `restart`, il ne revient jamais et les leads s'empilent en silence
+    # dans messenger_messages. Comme en production.
+    restart: unless-stopped
 
 volumes:
   database_data:
