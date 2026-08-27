@@ -477,9 +477,16 @@ Saisie (≥ 4 caractères)
    └─> BAN /search  (navigateur, débounce 220 ms)
         └─> Sélection d'une adresse
              └─> API /zonage?lat&lon&key&insee
-                  └─> Affichage du verdict + formulaire contextualisé
-                       └─> API /lead  →  202
+                  └─> Affichage du verdict + appel à l'action contextualisé
+                       └─> Clic sur l'appel à l'action
+                            ├─> lien target="_top" vers le formulaire
+                            │   DU PARTENAIRE, pré-rempli (§6, §9)
+                            └─> sendBeacon /api/v1/conversion  →  204
 ```
+
+Le dernier appel est une **mesure**, pas une étape du parcours : il part en
+parallèle de la navigation et n'a pas le droit de la retarder. S'il échoue, le
+lien part quand même.
 
 ### Protocole entre l'iframe et la page hôte
 
@@ -564,9 +571,14 @@ Liste blanche explicite issue de `partner.origines_autorisees`. **Jamais `*`.**
 
 ### Limitation de débit
 
-Composant `RateLimiter` de Symfony, par IP **et** par clé partenaire.
-Cible : 30 requêtes / minute / IP sur `/api/v1/zonage`, 5 / minute sur
-`/api/v1/lead`.
+Composant `RateLimiter` de Symfony, par IP **et** par clé partenaire
+(`config/packages/framework.yaml`) :
+
+| Limiteur | Portée | Cible |
+|---|---|---|
+| `zonage_ip` | IP, sur `/api/v1/zonage` | 30 / minute |
+| `zonage_cle` | clé partenaire, sur `/api/v1/zonage` | 600 / minute — empêche une intégration emballée de saturer le service pour les autres |
+| `conversion_ip` | IP, sur `/api/v1/conversion` | 5 / minute — un visiteur normal clique une fois, peut-être deux |
 
 C'est le **seul** rempart : il n'y a pas de `limit_req` en amont (§2). L'IP
 réelle vient de `X-Forwarded-For`, donc elle ne vaut que si les proxys de
@@ -752,7 +764,7 @@ sans `shp2pgsql`.
 |---|---|---|---|
 | `app` | build local, cible `frankenphp_dev` | Symfony + FrankenPHP | `127.0.0.1:8085` → 8080 |
 | `database` | `postgis/postgis:16-3.4` | Postgres + PostGIS | `5435` → 5432 |
-| `mailer` | `axllent/mailpit` | repli e-mail des leads, en bac à sable | `8028` (UI), `1028` (SMTP) |
+| `mailer` | `axllent/mailpit` | Faux SMTP. ⚠️ **Sans emploi** : le repli e-mail est parti avec la table `lead` (§5). Aucun code n'envoie d'e-mail. | `8028` (UI), `1028` (SMTP) |
 | `gis` | GDAL, version figée, profil `tools` | `ogrinfo` (§4.1) et `ogr2ogr` (§4.2) | — |
 
 Les ports hôtes sont choisis pour ne pas heurter les autres projets du poste
@@ -791,7 +803,7 @@ production (§13).
 |---|---|---|
 | Code | bind-mount `./:/app` | copié dans l'image au build |
 | `APP_ENV` | `dev`, profiler actif | `prod`, cache warmé au build |
-| E-mails | Mailpit | SMTP réel via `MAILER_DSN` |
+| E-mails | Mailpit | `MAILER_DSN` configuré, **aucun envoi** (§5) |
 | TLS | aucun, HTTP clair sur 8085 | Caddy mutualisé du VPS |
 | Migrations | `make migrate`, à la demande | entrypoint, `RUN_MIGRATIONS=1` sur `app` seul |
 
