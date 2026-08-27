@@ -97,7 +97,11 @@
     line-height: 1.25; font-weight: 700; letter-spacing: -.015em;
     color: var(--encre); text-wrap: balance;
   }
-  .chapo { margin: 0; max-width: 68ch; color: var(--texte-doux); font-size: 1.0625rem; }
+  /* Pas de `max-width` ici : le chapô suit la largeur du widget. Un garde-fou
+     de lisibilité l'arrêtait aux deux tiers de la colonne, ce qui se lisait
+     comme un défaut d'alignement — le titre et les cartes vont au bord, lui
+     s'arrêtait au milieu de nulle part. */
+  .chapo { margin: 0; color: var(--texte-doux); font-size: 1.0625rem; }
   .chapo + .chapo { margin-top: 12px; }
   .chapo strong { color: var(--texte); font-weight: 600; }
 
@@ -121,18 +125,41 @@
   .cartes p { margin: 0; font-size: .9375rem; color: var(--texte-doux); }
 
   /* ──────────────────────────────────────────────── le panneau de saisie */
+  /* C'est l'argument de la page : ce bloc doit se voir avant tout le reste.
+     Trois leviers discrets pris un par un — un filet accent plus épais, une
+     tête teintée qui l'annonce, une ombre nettement plus profonde que celle
+     des autres blocs — qui, ensemble, le posent au premier plan sans le
+     rendre criard. Le filet rattache au passage le bloc à la marque du
+     partenaire sans rien lui emprunter d'autre. */
   .panneau {
-    margin: 28px 0 0; padding: 26px;
-    background: var(--fond); border: 1px solid var(--bord);
-    border-radius: var(--r-carte); box-shadow: var(--ombre);
+    margin: 36px 0 0; padding: 0;
+    background: var(--fond);
+    border: 1px solid var(--accent-trait);
+    border-top: 5px solid var(--accent);
+    border-radius: var(--r-carte);
+    /* Ombre décalée vers le bas, étalement négatif : elle descend sous le
+       bloc sans déborder sur les côtés, où les 8px de padding du body la
+       couperaient net contre le bord de l'iframe. */
+    box-shadow: 0 2px 4px rgba(16,24,32,.05), 0 18px 40px -12px rgba(16,24,32,.24);
   }
-  /* Le filet coloré rattache visuellement le bloc à la marque du partenaire
-     sans rien lui emprunter d'autre. */
-  .panneau { border-top: 3px solid var(--accent); }
+
+  /* Pas d'`overflow: hidden` sur `.panneau` — il rognerait la liste de
+     suggestions, qui déborde volontairement sous le champ. D'où les coins
+     arrondis repris ici, sur la tête elle-même. */
+  .panneau-tete {
+    padding: 22px 26px 20px;
+    background: var(--accent-voile);
+    border-bottom: 1px solid var(--accent-trait);
+    border-radius: calc(var(--r-carte) - 2px) calc(var(--r-carte) - 2px) 0 0;
+  }
+  .panneau-tete .indice { margin-bottom: 0; }
+
+  .panneau-corps { padding: 22px 26px 26px; }
+  .panneau-corps > :first-child { margin-top: 0; }
 
   .panneau-titre {
-    margin: 0 0 4px; font-size: 1.1875rem; font-weight: 700;
-    letter-spacing: -.01em; color: var(--encre);
+    margin: 0 0 4px; font-size: 1.375rem; font-weight: 700;
+    letter-spacing: -.015em; color: var(--encre);
   }
   label { display: block; margin: 18px 0 4px; font-weight: 600; font-size: .9375rem; }
   .indice { margin: 0 0 12px; font-size: .875rem; color: var(--texte-doux); }
@@ -273,7 +300,8 @@
   .mentions p:last-child { margin-bottom: 0; }
 
   @media (max-width: 560px) {
-    .panneau { padding: 20px 16px; }
+    .panneau-tete { padding: 18px 16px 16px; }
+    .panneau-corps { padding: 18px 16px 22px; }
     .cta { display: block; }
   }
 
@@ -329,23 +357,27 @@
   </header>
 
   <section class="panneau" aria-labelledby="panneau-titre">
-    <h2 class="panneau-titre" id="panneau-titre">Testez votre terrain</h2>
-    <p class="indice">Le résultat s’affiche dès que vous choisissez une adresse.</p>
-
-    <label for="adresse">Adresse du terrain</label>
-    <p class="indice" id="indice">Saisissez au moins 4 caractères, puis choisissez une adresse dans la liste.</p>
-
-    <div class="champ">
-      <svg class="loupe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="adresse" type="text" autocomplete="off" spellcheck="false"
-             role="combobox" aria-expanded="false" aria-controls="suggestions"
-             aria-describedby="indice" aria-autocomplete="list"
-             placeholder="12 rue des Vignes, 91130 Ris-Orangis">
-      <ul id="suggestions" role="listbox" aria-label="Adresses proposées" hidden></ul>
+    <div class="panneau-tete">
+      <h2 class="panneau-titre" id="panneau-titre">Testez votre terrain</h2>
+      <p class="indice">Le résultat s’affiche dès que vous choisissez une adresse.</p>
     </div>
 
-    <div id="etat" class="chargement" role="status" aria-live="polite"></div>
-    <div id="resultat" aria-live="polite"></div>
+    <div class="panneau-corps">
+      <label for="adresse">Adresse du terrain</label>
+      <p class="indice" id="indice">Saisissez au moins 4 caractères, puis choisissez une adresse dans la liste.</p>
+
+      <div class="champ">
+        <svg class="loupe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="adresse" type="text" autocomplete="off" spellcheck="false"
+               role="combobox" aria-expanded="false" aria-controls="suggestions"
+               aria-describedby="indice" aria-autocomplete="list"
+               placeholder="12 rue des Vignes, 91130 Ris-Orangis">
+        <ul id="suggestions" role="listbox" aria-label="Adresses proposées" hidden></ul>
+      </div>
+
+      <div id="etat" class="chargement" role="status" aria-live="polite"></div>
+      <div id="resultat" aria-live="polite"></div>
+    </div>
   </section>
 
   <section class="echelle" id="echelle" aria-labelledby="echelle-titre">
