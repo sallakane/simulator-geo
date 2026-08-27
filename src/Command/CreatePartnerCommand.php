@@ -43,6 +43,9 @@ final class CreatePartnerCommand extends Command
             ->addOption('champ', 'c', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY,
                 'Correspondance nom_logique=champ_du_formulaire, répétable. '
                 .'Noms logiques : rue, code_postal, ville, message, simulation')
+            ->addOption('theme', null, InputOption::VALUE_REQUIRED,
+                'Couleur d\'accent du widget, et éventuellement l\'encre des titres : '
+                .'#6f0006 ou #6f0006,#021349. Sans thème, le widget reste neutre.')
             ->addOption('cle', null, InputOption::VALUE_REQUIRED, 'Clé publique imposée (tests) ; générée sinon');
     }
 
@@ -80,6 +83,14 @@ final class CreatePartnerCommand extends Command
             ->setLeadEndpoint($input->getOption('formulaire'))
             ->setLeadChamps($champs);
 
+        try {
+            $partner->setTheme($input->getOption('theme'));
+        } catch (\InvalidArgumentException $e) {
+            $io->error($e->getMessage());
+
+            return Command::FAILURE;
+        }
+
         $this->em->persist($partner);
         $this->em->flush();
 
@@ -89,6 +100,7 @@ final class CreatePartnerCommand extends Command
             ['Origines' => $origines ? implode(', ', $origines) : '(aucune — les appels navigateur seront refusés)'],
             ['Formulaire' => $partner->getLeadEndpoint() ?? '(aucun — pas de redirection)'],
             ['Champs' => $champs ? json_encode($champs, \JSON_UNESCAPED_SLASHES) : '(aucun)'],
+            ['Thème' => $partner->getTheme() ?? '(aucun — widget neutre)'],
         );
 
         if (null !== $partner->getLeadEndpoint() && [] === $champs) {

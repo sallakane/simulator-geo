@@ -40,6 +40,14 @@ class Partner
     #[ORM\Column(type: Types::JSON)]
     private array $originesAutorisees = [];
 
+    /**
+     * Couleur d'accent du widget, éventuellement suivie de l'encre des titres :
+     * `#6f0006` ou `#6f0006,#021349`. Tout le reste de la palette en dérive.
+     *
+     * Deux couleurs et pas une charte : c'est ce qui permet au widget de
+     * s'accorder au site de CHAQUE partenaire sans qu'aucune couleur de client
+     * ne soit écrite dans le code (SPEC §1, §15).
+     */
     #[ORM\Column(length: 40, nullable: true)]
     private ?string $theme = null;
 
@@ -122,11 +130,52 @@ class Partner
         return $this->theme;
     }
 
+    /**
+     * @throws \InvalidArgumentException si la valeur n'est pas un thème valide
+     */
     public function setTheme(?string $theme): self
     {
-        $this->theme = $theme;
+        $normalise = self::normaliserTheme($theme);
+
+        // Écriture : on refuse bruyamment. Un thème silencieusement ignoré se
+        // découvrirait en recette, sur le site du client, au pire moment.
+        if (null !== $theme && '' !== trim($theme) && null === $normalise) {
+            throw new \InvalidArgumentException(
+                "Thème invalide : « $theme ». Attendu une couleur hexadécimale, "
+                .'éventuellement suivie d\'une seconde : #6f0006 ou #6f0006,#021349.'
+            );
+        }
+
+        $this->theme = $normalise;
 
         return $this;
+    }
+
+    /**
+     * Seule définition de ce qu'est un thème valide. Elle sert des deux côtés :
+     * en écriture (ci-dessus, où l'erreur est levée) et en lecture par
+     * `WidgetController`, où une valeur douteuse est simplement ignorée — la
+     * base reste éditable à la main, et cette chaîne finit dans le CSSOM d'une
+     * iframe.
+     *
+     * Un seul jeton douteux invalide TOUT le thème : un widget à moitié peint
+     * est un défaut qu'on ne voit pas en recette.
+     */
+    public static function normaliserTheme(?string $theme): ?string
+    {
+        if (null === $theme || '' === trim($theme)) {
+            return null;
+        }
+
+        $jetons = array_slice(array_map('trim', explode(',', $theme)), 0, 2);
+
+        foreach ($jetons as $jeton) {
+            if (1 !== preg_match('/^#([0-9a-f]{3}|[0-9a-f]{6})$/i', $jeton)) {
+                return null;
+            }
+        }
+
+        return implode(',', $jetons);
     }
 
     public function getLeadEndpoint(): ?string
