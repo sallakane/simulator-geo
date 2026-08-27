@@ -287,7 +287,7 @@
     transform: translateY(-2px);
   }
   .echelle li[data-actif] strong::after {
-    content: " — votre terrain"; font-weight: 600; color: var(--texte-doux);
+    content: " (votre terrain)"; font-weight: 600; color: var(--texte-doux);
   }
 
   /* ────────────────────────────────────────────────────────── les mentions */
@@ -325,12 +325,12 @@
     <p class="chapo">
       Certains sols argileux <strong>gonflent quand il pleut et se rétractent quand il fait sec</strong>.
       Le terrain bouge alors de quelques centimètres, de façon inégale sous la construction : c’est ce
-      qui fissure les murs, bloque les portes et déforme les fondations. Rien ne se voit en surface —
+      qui fissure les murs, bloque les portes et déforme les fondations. Rien ne se voit en surface :
       seul le sol le dit.
     </p>
     <p class="chapo">
       Saisissez l’adresse de votre terrain : vous saurez <strong>en quelques secondes</strong> s’il se
-      situe en zone exposée, et ce que la réglementation impose — ou non — avant de vendre ou de construire.
+      situe en zone exposée, et ce que la réglementation impose, ou non, avant de vendre ou de construire.
     </p>
 
     <ul class="cartes">
@@ -392,7 +392,7 @@
   </section>
 
   <footer class="mentions">
-    <p>Source : BRGM / Géorisques — carte d’exposition au retrait-gonflement des argiles, arrêté du 9 janvier 2026.</p>
+    <p>Source : BRGM / Géorisques (carte d’exposition au retrait-gonflement des argiles, arrêté du 9 janvier 2026).</p>
     <p>Outil d’orientation. Il ne constitue ni un état des risques réglementaire ni un avis juridique : l’obligation dépend aussi du caractère non bâti et constructible du terrain et de la nature de l’opération.</p>
   </footer>
 
@@ -668,7 +668,7 @@
     var lignes = [];
     if (p && p.label) { lignes.push('Terrain situé ' + p.label + '.'); }
     if (conversion.resume) { lignes.push(conversion.resume); }
-    lignes.push('— pré-rempli par le simulateur, à compléter.');
+    lignes.push('Message pré-rempli par le simulateur, à compléter.');
     return lignes.join('\n');
   }
 
@@ -756,8 +756,8 @@
       var o = document.createElement('div');
       o.className = 'obligation';
       var fort = document.createElement('strong');
-      fort.textContent = 'Étude ' + donnees.obligation.mission + ' obligatoire — norme '
-        + donnees.obligation.norme;
+      fort.textContent = 'Étude ' + donnees.obligation.mission + ' obligatoire (norme '
+        + donnees.obligation.norme + ')';
       o.appendChild(fort);
       var texte = document.createElement('span');
       texte.textContent = donnees.obligation.resume;
