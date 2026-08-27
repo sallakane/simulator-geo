@@ -470,6 +470,48 @@ avant tout consentement, sur n'importe quel site.
 Entrée, Échap), `aria-live` sur le résultat, focus visible,
 `prefers-reduced-motion` respecté.
 
+### Habillage
+
+Le widget s'affiche dans une iframe : il n'hérite d'aucun style du site hôte,
+et c'est voulu (isolation CSS totale). Il doit donc s'accorder **sans** rien
+lui emprunter.
+
+Deux couleurs y suffisent, portées par `partner.theme` :
+
+| Jeton | Rôle | Exemple |
+|---|---|---|
+| accent | appels à l'action, focus, filets, pastilles | `#6f0006` |
+| encre *(facultatif)* | titres et libellés forts | `#021349` |
+
+`theme = "#6f0006,#021349"`. Tout le reste de la palette en dérive par
+`color-mix`. **Aucune couleur de client n'est écrite dans le code** (§1, §15) :
+un partenaire sans thème obtient un widget neutre, pas celui du voisin.
+
+La valeur est validée **des deux côtés** : `Partner::setTheme()` refuse
+bruyamment à l'écriture, `WidgetController` ignore en silence à la lecture — la
+base reste éditable à la main, et cette chaîne finit dans le CSSOM d'une iframe.
+Un seul jeton douteux invalide le thème entier : à moitié peint, le défaut ne
+se verrait pas en recette.
+
+```bash
+php bin/console app:partner:theme <cle> '#6f0006,#021349'
+php bin/console app:partner:theme <cle> -        # retour au widget neutre
+```
+
+**Aucune police externe.** Le widget hérite de la pile système. Charger une
+police tierce ajouterait une dépendance, une latence, et — pour une police
+servie par un tiers — un transfert d'adresse IP à documenter, alors que le
+widget doit pouvoir tourner **avant tout consentement** (§9).
+
+**Pas de bascule sur `prefers-color-scheme`.** Le thème qui compte est celui de
+la page hôte, que l'iframe ne peut pas connaître. Suivre l'OS du visiteur
+poserait un bloc sombre au milieu d'un site clair.
+
+L'introduction pédagogique (ce qu'est le retrait-gonflement, ce que dit la loi,
+ce que le simulateur apporte) est affichée **par défaut** : sans elle, le champ
+de saisie ne dit pas au visiteur pourquoi il le concerne. `widget.js?key=…&intro=0`
+la coupe pour une intégration en colonne étroite.
+
 ### Séquence
 
 ```

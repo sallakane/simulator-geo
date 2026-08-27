@@ -244,7 +244,83 @@ docker compose -f compose.prod.yaml exec app php bin/console app:zonage:verifier
 
 ---
 
-## 5. Développement local
+## 5. Le widget chez le partenaire
+
+Une balise, rien d'autre. Le contenu du `<div>` est le **repli statique** : il
+reste affiché tant que le simulateur n'a pas prouvé qu'il fonctionne, et pour
+toujours s'il ne se charge pas.
+
+```html
+<div id="zonage-widget">
+  <p>Vous vendez un terrain ou vous construisez ?
+     <a href="/demande-devis">Demandez votre devis d’étude de sol</a>.</p>
+</div>
+<script src="https://api.zonage.sallakane.cloud/widget.js?key=pk_…" async></script>
+```
+
+### S'accorder au site hôte
+
+Le widget vit dans une iframe : **il n'hérite d'aucun style de la page**, et
+c'est voulu — isolation CSS totale, aucun conflit possible avec la feuille de
+style du partenaire. Il doit donc s'accorder sans rien lui emprunter.
+
+Deux couleurs y suffisent, relevées dans la feuille de style du site hôte et
+rangées dans `partner.theme` — **jamais dans le code** (SPEC §1) :
+
+```bash
+php bin/console app:partner:theme <cle> '#6f0006,#021349'
+#                                        └accent  └encre (facultative)
+php bin/console app:partner:theme <cle> -    # retour au widget neutre
+```
+
+L'accent porte les appels à l'action, le focus et les filets ; l'encre porte les
+titres. Le reste de la palette en dérive par `color-mix`. Effet immédiat :
+`/embed` n'est pas mis en cache.
+
+```mermaid
+flowchart LR
+    T["partner.theme<br/>accent + encre"]
+    W["Partner::setTheme()<br/>refuse bruyamment"]
+    C["WidgetController<br/>ignore en silence"]
+    V["--accent · --encre<br/>dans le CSSOM de l'iframe"]
+    D["palette dérivée<br/>voiles, filets, pastilles"]
+
+    T -->|écriture| W
+    T -->|lecture| C --> V --> D
+```
+
+Deux validations et non une : la base reste éditable à la main, et cette chaîne
+finit dans une propriété de style. Un seul jeton douteux invalide le thème
+**entier** — à moitié peint, le défaut ne se verrait pas en recette.
+
+### Ce que le widget ne fait pas
+
+- **Aucune police externe.** Il hérite de la pile système. Une police tierce
+  serait une dépendance, une latence, et un transfert d'adresse IP à
+  documenter — alors qu'il doit tourner **avant tout consentement** (SPEC §9).
+- **Aucun cookie, aucun traceur, aucun stockage.** Un test le vérifie.
+- **Aucune bascule sur `prefers-color-scheme`.** Le thème qui compte est celui
+  de la page hôte, que l'iframe ne peut pas connaître. Suivre l'OS du visiteur
+  poserait un bloc sombre au milieu d'un site clair.
+- **Il ne vide jamais le conteneur.** API en panne, script bloqué, réseau
+  coupé : le repli statique reste, et le site hôte continue de convertir.
+
+### L'introduction pédagogique
+
+Elle est affichée par défaut — ce qu'est le retrait-gonflement, ce que dit la
+loi depuis le 1<sup>er</sup> juillet 2026, ce que le visiteur obtient. Sans
+elle, le champ de saisie ne dit pas *pourquoi* il le concerne.
+
+```html
+<script src="…/widget.js?key=pk_…&intro=0" async></script>
+```
+
+`intro=0` la coupe, pour une intégration en colonne étroite ou sous un texte
+qui dit déjà la même chose.
+
+---
+
+## 6. Développement local
 
 Tout tourne dans Docker, PHP compris : PostGIS 3.4 et GDAL ne s'installent pas
 proprement à la main, et c'est la même image qui part en production.
@@ -288,7 +364,7 @@ make verifier   # rejoue ces points contre le zonage en service
 
 ---
 
-## 6. Supervision
+## 7. Supervision
 
 ```bash
 curl -s localhost:8085/api/v1/health
@@ -301,7 +377,7 @@ parfaitement — elle renvoie « hors périmètre » pour la France entière. D'
 
 ---
 
-## 7. Où est quoi
+## 8. Où est quoi
 
 ```
 bin/charger-rga.sh          Le pipeline de la donnée, de bout en bout (§2)
@@ -312,8 +388,9 @@ src/Service/ZonageResolver.php   Le point-dans-polygone (§3)
 src/Service/ObligationMapper.php niveau_code → mission NF P 94-500 + textes
 src/Service/LienDevis.php        URL pré-remplie du formulaire du partenaire
 src/Controller/                  zonage · conversion · embed · health
+src/Command/                     app:partner:create · app:partner:theme · app:zonage:verifier
 public/widget.js                 Chargeur embarqué sur le site hôte, < 5 Ko
-templates/embed.html             L'application iframe, zéro dépendance
+templates/embed.html             L'application iframe : contenu, style, logique (§5)
 
 infra/                      Unité systemd, snippet Caddy, sauvegarde
 docs/donnees-rga.md         Millésime, téléchargement, relevé du shapefile
