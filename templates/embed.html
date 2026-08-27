@@ -299,9 +299,31 @@
   .mentions p { margin: 0 0 6px; }
   .mentions p:last-child { margin-bottom: 0; }
 
+  /* Sur un téléphone, chaque pixel de marge latérale se paie sur la largeur
+     du champ de saisie, et le site hôte en a déjà pris sa part avant nous.
+     On rend donc au contenu ce que le confort de bureau lui prenait : le
+     padding du body tombe à 2px (l'ombre du panneau ne déborde plus que d'un
+     cheveu, c'est le prix), les blocs se resserrent, et le rythme vertical se
+     tasse — un écran de 375px ne supporte pas les respirations d'un écran de
+     1400. */
   @media (max-width: 560px) {
-    .panneau-tete { padding: 18px 16px 16px; }
-    .panneau-corps { padding: 18px 16px 22px; }
+    body { padding: 2px; }
+
+    .intro { margin-bottom: 20px; }
+    .cartes { gap: 10px; margin-top: 18px; }
+    .cartes li { padding: 16px; }
+
+    .panneau { margin-top: 24px; }
+    .panneau-tete { padding: 16px 14px 14px; }
+    .panneau-corps { padding: 16px 14px 18px; }
+    .verdict { padding: 16px 14px; }
+
+    .echelle { margin-top: 22px; }
+    .echelle ol { gap: 10px; }
+    .echelle li { padding: 14px; }
+
+    .mentions { margin-top: 20px; padding-top: 14px; }
+
     .cta { display: block; }
   }
 
