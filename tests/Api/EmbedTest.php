@@ -75,6 +75,74 @@ final class EmbedTest extends ApiTestCase
     }
 
     /**
+     * Deux couleurs suffisent à accorder le widget au site hôte, et c'est ce
+     * qui permet de n'écrire la charte d'aucun client dans le code (SPEC §1).
+     */
+    public function testLeThemeDuPartenaireEstTransmisAuWidget(): void
+    {
+        $em = static::getContainer()->get(EntityManagerInterface::class);
+        $this->creerPartenaire()->setTheme('#6f0006,#021349');
+        $em->flush();
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE]);
+
+        self::assertStringContainsString(
+            '"theme":"#6f0006,#021349"',
+            (string) $this->client->getResponse()->getContent(),
+        );
+    }
+
+    /**
+     * À l'écriture, un thème invalide est refusé bruyamment : silencieusement
+     * ignoré, il se découvrirait en recette, sur le site du client.
+     */
+    public function testUnThemeInvalideEstRefuseALEcriture(): void
+    {
+        $partner = $this->creerPartenaire();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $partner->setTheme('#6f0006,rgb(2 19 73)');
+    }
+
+    /**
+     * Et à la lecture, il est ignoré : la base reste éditable à la main, et
+     * cette chaîne finit dans le CSSOM de l'iframe. Un jeton douteux invalide
+     * TOUT le thème — un widget à moitié peint est un défaut qu'on ne voit pas.
+     */
+    public function testUnThemeGlisseEnBaseALaMainEstIgnoreEnEntier(): void
+    {
+        $this->creerPartenaire();
+
+        // Contournement délibéré de l'entité : on simule une valeur posée par
+        // un UPDATE manuel, seul chemin par lequel elle peut encore arriver.
+        $this->db()->executeStatement(
+            'UPDATE partner SET theme = :t WHERE public_key = :k',
+            ['t' => '#6f0006,red;}html{display:none', 'k' => self::CLE],
+        );
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE]);
+        $corps = (string) $this->client->getResponse()->getContent();
+
+        self::assertStringContainsString('"theme":null', $corps);
+        self::assertStringNotContainsString('display:none', $corps);
+    }
+
+    /**
+     * L'introduction explique au visiteur POURQUOI ce champ de saisie le
+     * concerne. Elle est donc affichée par défaut, et se coupe explicitement.
+     */
+    public function testLIntroductionEstAfficheeParDefautEtCoupableParParametre(): void
+    {
+        $this->creerPartenaire();
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE]);
+        self::assertStringContainsString('"intro":true', (string) $this->client->getResponse()->getContent());
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE, 'intro' => '0']);
+        self::assertStringContainsString('"intro":false', (string) $this->client->getResponse()->getContent());
+    }
+
+    /**
      * Le chargeur s'exécute sur des sites tiers : chaque kilo-octet est un
      * risque, et le budget de §7 est de 5 Ko. Un test le rappelle mieux qu'un
      * commentaire.

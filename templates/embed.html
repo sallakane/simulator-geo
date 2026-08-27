@@ -6,106 +6,364 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Simulateur d’exposition au retrait-gonflement des argiles</title>
 <style>
-  /* Aucune police externe : le widget doit se charger vite et ne rien demander
-     à un tiers. On hérite de la pile système. */
+  /* ═══════════════════════════════════════════════════════════════════════
+     Aucune police externe, aucun asset distant : ce document s'exécute dans
+     une iframe sur le site d'un tiers. Chaque requête sortante serait une
+     latence de plus, une dépendance de plus — et, pour une police servie par
+     un tiers, un transfert d'adresse IP à documenter au RGPD (SPEC §9).
+     Le widget doit pouvoir tourner AVANT tout consentement.
+
+     Toute l'identité visuelle tient donc dans deux variables, --accent et
+     --encre, alimentées par `partner.theme` (voir plus bas). Aucune couleur
+     de client n'est écrite ici : ce fichier sert tous les partenaires
+     (SPEC §1, §15).
+     ═══════════════════════════════════════════════════════════════════════ */
   :root {
+    /* Repli neutre, volontairement sobre : c'est ce que voit un partenaire
+       qui n'a pas déclaré de thème. Jamais la couleur d'un client. */
     --accent: #1c5b7d;
-    --accent-clair: #e8f1f6;
-    --texte: #1a1a1a;
-    --texte-doux: #55606a;
-    --bord: #d4dae0;
+    --encre: #16202a;
+
+    /* Dérivés : teintes très claires de l'accent, pour les fonds et les
+       filets. Repli neutre d'abord — une custom property invalide n'est pas
+       ignorée au profit de la déclaration précédente, elle rend la propriété
+       qui l'utilise invalide (fond transparent, filet disparu). Le @supports
+       plus bas ne recolore que là où color-mix existe réellement. */
+    --accent-voile: #f4f6f8;
+    --accent-trait: #dfe5ea;
+    --encre-voile: #fafbfc;
+
+    --texte: #1f2933;
+    --texte-doux: #5a6672;
+    --bord: #e2e7ec;
     --fond: #fff;
-    --fort: #b3261e;
-    --moyen: #b4600a;
+    --surface: #f7f9fb;
+
+    /* Échelle d'exposition. Ces quatre-là ne sont PAS thématisables : elles
+       portent un sens réglementaire, et un partenaire qui repeindrait « fort »
+       en vert ferait un contresens. */
+    --fort: #a3231b;
+    --moyen: #a35b0a;
     --faible: #1c5b7d;
     --nul: #2c6e49;
-    --rayon: 8px;
+
+    --r-carte: 16px;
+    --r-champ: 10px;
+    --ombre: 0 1px 2px rgba(16,24,32,.04), 0 8px 28px rgba(16,24,32,.06);
   }
+
+  @supports (background: color-mix(in srgb, red 10%, white)) {
+    :root {
+      --accent-voile: color-mix(in srgb, var(--accent) 8%, #fff);
+      --accent-trait: color-mix(in srgb, var(--accent) 22%, #fff);
+      --encre-voile: color-mix(in srgb, var(--encre) 4%, #fff);
+    }
+  }
+
+  /* Pas de bascule automatique sur prefers-color-scheme : le thème qui compte
+     est celui de la PAGE HÔTE, que nous ne pouvons pas connaître depuis
+     l'iframe. Suivre l'OS du visiteur poserait un bloc sombre au milieu d'un
+     site clair — c'est exactement ce qu'il faut éviter. */
+
   * { box-sizing: border-box; }
+
   body {
-    margin: 0; padding: 0;
-    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    color: var(--texte); background: var(--fond);
+    margin: 0;
+    padding: 8px;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--texte);
+    background: transparent;   /* on ne peint pas le fond du site hôte */
+    -webkit-font-smoothing: antialiased;
   }
-  .zone { padding: 4px; }
-  label { display: block; font-weight: 600; margin-bottom: 6px; }
-  .indice { color: var(--texte-doux); font-size: .875rem; margin: 0 0 10px; }
+
+  .widget { max-width: 980px; margin: 0 auto; }
+
+  /* ───────────────────────────────────────────────────────── introduction */
+  .intro { margin: 0 0 28px; }
+  .intro[hidden] { display: none; }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin: 0 0 14px; padding: 6px 14px;
+    font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-voile);
+    border: 1px solid var(--accent-trait); border-radius: 999px;
+  }
+  .eyebrow svg { width: 14px; height: 14px; flex: none; }
+
+  .intro h1 {
+    margin: 0 0 14px;
+    font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.1rem);
+    line-height: 1.25; font-weight: 700; letter-spacing: -.015em;
+    color: var(--encre); text-wrap: balance;
+  }
+  .chapo { margin: 0; max-width: 68ch; color: var(--texte-doux); font-size: 1.0625rem; }
+  .chapo + .chapo { margin-top: 12px; }
+  .chapo strong { color: var(--texte); font-weight: 600; }
+
+  /* ─────────────────────────────────────────────── les trois « pourquoi » */
+  .cartes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px; margin: 26px 0 0; padding: 0; list-style: none;
+  }
+  .cartes li {
+    padding: 20px; background: var(--surface);
+    border: 1px solid var(--bord); border-radius: var(--r-carte);
+  }
+  .cartes .pastille {
+    display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; margin-bottom: 12px;
+    color: var(--accent); background: var(--accent-voile);
+    border-radius: 9px;
+  }
+  .cartes .pastille svg { width: 18px; height: 18px; }
+  .cartes h2 { margin: 0 0 6px; font-size: .9375rem; font-weight: 700; color: var(--encre); }
+  .cartes p { margin: 0; font-size: .9375rem; color: var(--texte-doux); }
+
+  /* ──────────────────────────────────────────────── le panneau de saisie */
+  .panneau {
+    margin: 28px 0 0; padding: 26px;
+    background: var(--fond); border: 1px solid var(--bord);
+    border-radius: var(--r-carte); box-shadow: var(--ombre);
+  }
+  /* Le filet coloré rattache visuellement le bloc à la marque du partenaire
+     sans rien lui emprunter d'autre. */
+  .panneau { border-top: 3px solid var(--accent); }
+
+  .panneau-titre {
+    margin: 0 0 4px; font-size: 1.1875rem; font-weight: 700;
+    letter-spacing: -.01em; color: var(--encre);
+  }
+  label { display: block; margin: 18px 0 4px; font-weight: 600; font-size: .9375rem; }
+  .indice { margin: 0 0 12px; font-size: .875rem; color: var(--texte-doux); }
 
   .champ { position: relative; }
   input[type=text] {
-    width: 100%; padding: 12px 14px; font: inherit; color: inherit;
-    border: 1px solid var(--bord); border-radius: var(--rayon); background: #fff;
+    width: 100%; padding: 15px 16px 15px 46px;
+    font: inherit; color: inherit; background: var(--fond);
+    border: 1px solid var(--bord); border-radius: var(--r-champ);
+    transition: border-color .15s, box-shadow .15s;
   }
-  input[type=text]:focus-visible, button:focus-visible, li:focus-visible {
-    outline: 3px solid var(--accent); outline-offset: 2px;
+  input[type=text]::placeholder { color: #9aa5b1; }
+  input[type=text]:hover { border-color: #cbd3db; }
+  input[type=text]:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-voile);
   }
+  .loupe {
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    width: 18px; height: 18px; color: #9aa5b1; pointer-events: none;
+  }
+  /* Le focus clavier reste visible et épais partout : c'est une exigence
+     d'accessibilité, pas une finition (SPEC §7). */
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
   ul[role=listbox] {
-    position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px);
-    margin: 0; padding: 4px; list-style: none; background: #fff;
-    border: 1px solid var(--bord); border-radius: var(--rayon);
-    box-shadow: 0 6px 24px rgba(0,0,0,.12); max-height: 260px; overflow-y: auto;
+    position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 6px);
+    margin: 0; padding: 6px; list-style: none;
+    background: var(--fond); border: 1px solid var(--bord);
+    border-radius: var(--r-champ); box-shadow: 0 12px 32px rgba(16,24,32,.14);
+    max-height: 280px; overflow-y: auto;
   }
   ul[hidden] { display: none; }
-  li[role=option] { padding: 10px 12px; border-radius: 6px; cursor: pointer; }
-  li[aria-selected=true], li:hover { background: var(--accent-clair); }
+  li[role=option] {
+    padding: 11px 12px; border-radius: 7px; cursor: pointer;
+    font-size: .9375rem; line-height: 1.4;
+  }
+  li[aria-selected=true], li[role=option]:hover { background: var(--accent-voile); color: var(--encre); }
 
-  .verdict { margin-top: 16px; border: 1px solid var(--bord); border-left-width: 6px; border-radius: var(--rayon); padding: 16px; }
+  .chargement { margin-top: 12px; font-size: .875rem; color: var(--texte-doux); }
+  .chargement:empty { margin-top: 0; }
+
+  /* ─────────────────────────────────────────────────────────── le verdict */
+  .verdict {
+    margin-top: 20px; padding: 22px;
+    background: var(--encre-voile);
+    border: 1px solid var(--bord); border-left: 5px solid var(--texte-doux);
+    border-radius: var(--r-carte);
+  }
   .verdict[data-niveau="3"] { border-left-color: var(--fort); }
   .verdict[data-niveau="2"] { border-left-color: var(--moyen); }
   .verdict[data-niveau="1"] { border-left-color: var(--faible); }
   .verdict[data-niveau="0"] { border-left-color: var(--nul); }
-  .verdict[data-niveau="hors"], .verdict[data-niveau="panne"] { border-left-color: var(--texte-doux); }
-  .verdict h2 { margin: 0 0 4px; font-size: 1.125rem; }
-  .verdict p { margin: 0 0 10px; }
-  .adresse { color: var(--texte-doux); font-size: .875rem; margin: 0 0 10px; }
-  .obligation { background: var(--accent-clair); border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; }
-  .obligation strong { display: block; }
-  .approx { color: var(--moyen); font-size: .875rem; margin: 0 0 10px; }
 
-  .cta {
-    display: inline-block; padding: 12px 18px; font: inherit; font-weight: 600;
-    color: #fff; background: var(--accent); border: 0; border-radius: var(--rayon);
-    cursor: pointer; text-decoration: none;
+  .etiquette {
+    display: inline-block; margin: 0 0 10px; padding: 4px 12px;
+    font-size: .75rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: #fff; background: var(--texte-doux); border-radius: 999px;
   }
-  .cta:hover { filter: brightness(1.08); }
-  a.cta { text-align: center; }
+  .verdict[data-niveau="3"] .etiquette { background: var(--fort); }
+  .verdict[data-niveau="2"] .etiquette { background: var(--moyen); }
+  .verdict[data-niveau="1"] .etiquette { background: var(--faible); }
+  .verdict[data-niveau="0"] .etiquette { background: var(--nul); }
 
-  .mentions { margin: 14px 0 0; font-size: .75rem; color: var(--texte-doux); }
-  .mentions p { margin: 0 0 4px; }
+  .verdict h2 {
+    margin: 0 0 6px; font-size: 1.1875rem; font-weight: 700;
+    line-height: 1.3; letter-spacing: -.01em; color: var(--encre);
+  }
+  .verdict p { margin: 0 0 12px; }
+  .adresse { font-size: .9375rem; color: var(--texte-doux); }
 
-  .chargement { font-size: .875rem; color: var(--texte-doux); margin-top: 10px; }
+  .obligation {
+    margin: 0 0 14px; padding: 14px 16px;
+    background: var(--fond); border: 1px solid var(--bord); border-radius: 10px;
+  }
+  .obligation strong { display: block; margin-bottom: 2px; color: var(--encre); }
+  .obligation span { font-size: .9375rem; color: var(--texte-doux); }
+
+  .approx {
+    margin: 0 0 12px; padding: 10px 14px;
+    font-size: .875rem; color: #7a4b06;
+    background: #fdf6e8; border: 1px solid #f2e2bf; border-radius: 10px;
+  }
+
+  /* Bouton en pilule : c'est la forme d'appel à l'action la plus répandue sur
+     les sites vitrines, et elle se fond dans la plupart des chartes. */
+  .cta {
+    display: inline-block; padding: 14px 26px;
+    font: inherit; font-weight: 600; text-align: center; text-decoration: none;
+    color: #fff; background: var(--accent);
+    border: 0; border-radius: 999px; cursor: pointer;
+    transition: filter .15s, transform .15s;
+  }
+  .cta:hover { filter: brightness(1.12); }
+  .cta:active { transform: translateY(1px); }
+
+  /* ───────────────────────────────────────────── l'échelle des 4 niveaux */
+  .echelle { margin: 28px 0 0; }
+  .echelle h2 {
+    margin: 0 0 4px; font-size: 1rem; font-weight: 700; color: var(--encre);
+  }
+  .echelle > p { margin: 0 0 14px; font-size: .9375rem; color: var(--texte-doux); }
+  .echelle ol {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 12px; margin: 0; padding: 0; list-style: none;
+    counter-reset: none;
+  }
+  .echelle li {
+    padding: 16px; background: var(--fond);
+    border: 1px solid var(--bord); border-top: 4px solid currentColor;
+    border-radius: 12px;
+    transition: box-shadow .2s, transform .2s;
+  }
+  .echelle li[data-n="0"] { color: var(--nul); }
+  .echelle li[data-n="1"] { color: var(--faible); }
+  .echelle li[data-n="2"] { color: var(--moyen); }
+  .echelle li[data-n="3"] { color: var(--fort); }
+  .echelle strong { display: block; margin-bottom: 4px; font-size: .9375rem; }
+  .echelle span { display: block; font-size: .875rem; line-height: 1.5; color: var(--texte-doux); }
+
+  /* Le niveau du visiteur se distingue une fois le résultat obtenu : la
+     légende devient une lecture de SA situation. */
+  .echelle li[data-actif] {
+    box-shadow: 0 0 0 2px currentColor, var(--ombre);
+    transform: translateY(-2px);
+  }
+  .echelle li[data-actif] strong::after {
+    content: " — votre terrain"; font-weight: 600; color: var(--texte-doux);
+  }
+
+  /* ────────────────────────────────────────────────────────── les mentions */
+  .mentions {
+    margin: 26px 0 0; padding-top: 18px;
+    border-top: 1px solid var(--bord);
+    font-size: .8125rem; line-height: 1.55; color: var(--texte-doux);
+  }
+  .mentions p { margin: 0 0 6px; }
+  .mentions p:last-child { margin-bottom: 0; }
+
+  @media (max-width: 560px) {
+    .panneau { padding: 20px 16px; }
+    .cta { display: block; }
+  }
 
   /* Respect strict de la préférence système : aucune animation imposée. */
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --texte:#e9edf0; --texte-doux:#a6b0ba; --fond:#14181c; --bord:#333c45; --accent-clair:#1b2a34; }
-    input[type=text], ul[role=listbox] { background:#1b2027; color:inherit; }
-  }
 </style>
 </head>
 <body>
-<div class="zone">
-  <label for="adresse">Adresse du terrain</label>
-  <p class="indice" id="indice">Saisissez au moins 4 caractères, puis choisissez une adresse dans la liste.</p>
+<div class="widget">
 
-  <div class="champ">
-    <input id="adresse" type="text" autocomplete="off" spellcheck="false"
-           role="combobox" aria-expanded="false" aria-controls="suggestions"
-           aria-describedby="indice" aria-autocomplete="list"
-           placeholder="12 rue des Vignes, 91130 Ris-Orangis">
-    <ul id="suggestions" role="listbox" aria-label="Adresses proposées" hidden></ul>
-  </div>
+  <header class="intro" id="intro">
+    <p class="eyebrow">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v6c0 5 3.8 8.4 9 9 5.2-.6 9-4 9-9V7z"/><path d="m9 12 2 2 4-4"/></svg>
+      Carte officielle · arrêté du 9 janvier 2026
+    </p>
 
-  <div id="etat" class="chargement" role="status" aria-live="polite"></div>
-  <div id="resultat"></div>
+    <h1>Votre terrain est-il exposé au retrait-gonflement des argiles ?</h1>
 
-  <div class="mentions">
+    <p class="chapo">
+      Certains sols argileux <strong>gonflent quand il pleut et se rétractent quand il fait sec</strong>.
+      Le terrain bouge alors de quelques centimètres, de façon inégale sous la construction : c’est ce
+      qui fissure les murs, bloque les portes et déforme les fondations. Rien ne se voit en surface —
+      seul le sol le dit.
+    </p>
+    <p class="chapo">
+      Saisissez l’adresse de votre terrain : vous saurez <strong>en quelques secondes</strong> s’il se
+      situe en zone exposée, et ce que la réglementation impose — ou non — avant de vendre ou de construire.
+    </p>
+
+    <ul class="cartes">
+      <li>
+        <span class="pastille" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M5 20V9l7-5 7 5v11"/><path d="m10 20 1.5-5L14 20"/></svg></span>
+        <h2>Ce qui se passe dans le sol</h2>
+        <p>L’argile agit comme une éponge. Elle gonfle en hiver, se rétracte en été. Sous une maison,
+           ce mouvement n’est jamais uniforme : un côté descend plus que l’autre, et la structure travaille.</p>
+      </li>
+      <li>
+        <span class="pastille" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg></span>
+        <h2>Ce que dit la loi</h2>
+        <p>Depuis le 1<sup>er</sup> juillet 2026, vendre un terrain non bâti constructible ou signer un
+           contrat de construction de maison individuelle en zone <strong>moyenne ou forte</strong> impose
+           une étude géotechnique préalable. Ces zones couvrent 55 % du territoire.</p>
+      </li>
+      <li>
+        <span class="pastille" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+        <h2>Ce que vous obtenez ici</h2>
+        <p>Le niveau d’exposition officiel de votre parcelle, l’obligation qui en découle et la mission
+           applicable. Immédiatement, gratuitement, <strong>sans créer de compte ni laisser vos coordonnées</strong>.</p>
+      </li>
+    </ul>
+  </header>
+
+  <section class="panneau" aria-labelledby="panneau-titre">
+    <h2 class="panneau-titre" id="panneau-titre">Testez votre terrain</h2>
+    <p class="indice">Le résultat s’affiche dès que vous choisissez une adresse.</p>
+
+    <label for="adresse">Adresse du terrain</label>
+    <p class="indice" id="indice">Saisissez au moins 4 caractères, puis choisissez une adresse dans la liste.</p>
+
+    <div class="champ">
+      <svg class="loupe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="adresse" type="text" autocomplete="off" spellcheck="false"
+             role="combobox" aria-expanded="false" aria-controls="suggestions"
+             aria-describedby="indice" aria-autocomplete="list"
+             placeholder="12 rue des Vignes, 91130 Ris-Orangis">
+      <ul id="suggestions" role="listbox" aria-label="Adresses proposées" hidden></ul>
+    </div>
+
+    <div id="etat" class="chargement" role="status" aria-live="polite"></div>
+    <div id="resultat" aria-live="polite"></div>
+  </section>
+
+  <section class="echelle" id="echelle" aria-labelledby="echelle-titre">
+    <h2 id="echelle-titre">Les quatre niveaux d’exposition</h2>
+    <p>Ce que chacun implique concrètement pour un projet de vente ou de construction.</p>
+    <ol>
+      <li data-n="0"><strong>Nul</strong><span>Aucune argile identifiée sur la parcelle. Pas d’obligation liée au retrait-gonflement.</span></li>
+      <li data-n="1"><strong>Faible</strong><span>Pas d’obligation réglementaire. Une reconnaissance de sol reste utile pour dimensionner les fondations.</span></li>
+      <li data-n="2"><strong>Moyen</strong><span>Étude géotechnique préalable obligatoire avant la vente du terrain ou la construction.</span></li>
+      <li data-n="3"><strong>Fort</strong><span>Étude géotechnique préalable obligatoire, et adaptation des fondations indispensable.</span></li>
+    </ol>
+  </section>
+
+  <footer class="mentions">
     <p>Source : BRGM / Géorisques — carte d’exposition au retrait-gonflement des argiles, arrêté du 9 janvier 2026.</p>
     <p>Outil d’orientation. Il ne constitue ni un état des risques réglementaire ni un avis juridique : l’obligation dépend aussi du caractère non bâti et constructible du terrain et de la nature de l’opération.</p>
-  </div>
+  </footer>
+
 </div>
 
 <script id="configuration" type="application/json">{{CONFIG}}</script>
@@ -122,6 +380,54 @@
   var liste = document.getElementById('suggestions');
   var etat = document.getElementById('etat');
   var resultat = document.getElementById('resultat');
+  var echelle = document.getElementById('echelle');
+
+  /* ------------------------------------------------------------- identité
+     Deux couleurs, pas une charte : `partner.theme` porte l'accent (appels à
+     l'action, focus) et, facultativement, l'encre des titres. Tout le reste
+     en dérive par color-mix. C'est ce qui permet à ce fichier de servir tous
+     les partenaires sans qu'aucune couleur de client n'y soit écrite
+     (SPEC §1, §15).
+
+     Format : "#6f0006" ou "#6f0006,#021349".
+
+     La valeur est déjà validée côté serveur ; on la revalide ici parce
+     qu'elle finit dans le CSSOM, et qu'un jeton non contrôlé n'a rien à y
+     faire. Une valeur douteuse est ignorée, jamais appliquée à moitié. */
+  function appliquerTheme(theme) {
+    if (typeof theme !== 'string' || !theme) { return; }
+
+    var proprietes = ['--accent', '--encre'];
+    theme.split(',').slice(0, proprietes.length).forEach(function (jeton, rang) {
+      jeton = jeton.trim();
+      if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(jeton)) { return; }
+      document.documentElement.style.setProperty(proprietes[rang], jeton);
+    });
+  }
+  appliquerTheme(config.theme);
+
+  /* L'introduction pédagogique se coupe (`&intro=0`) pour une intégration en
+     colonne étroite ou sous un texte qui dit déjà la même chose. Elle est
+     affichée par défaut : c'est elle qui donne son sens au champ de saisie
+     pour un visiteur qui n'a jamais entendu parler d'argiles gonflantes. */
+  if (config.intro === false) {
+    var intro = document.getElementById('intro');
+    if (intro) { intro.hidden = true; }
+  }
+
+  /* L'échelle des quatre niveaux sert deux fois : légende avant la recherche,
+     lecture de SA situation après. Un même bloc, deux usages. */
+  function marquerEchelle(niveau) {
+    if (!echelle) { return; }
+    var items = echelle.querySelectorAll('li');
+    for (var i = 0; i < items.length; i++) {
+      if (null !== niveau && String(niveau) === items[i].getAttribute('data-n')) {
+        items[i].setAttribute('data-actif', '');
+      } else {
+        items[i].removeAttribute('data-actif');
+      }
+    }
+  }
 
   var propositions = [];
   var actif = -1;
@@ -257,11 +563,18 @@
 
   /* --------------------------------------------------------------- verdict */
   var TEXTES = {
-    3: { titre: 'Exposition forte au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
-    2: { titre: 'Exposition moyenne au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
-    1: { titre: 'Exposition faible au retrait-gonflement des argiles', cta: 'Demander une étude de projet' },
-    0: { titre: 'Pas d’exposition identifiée sur cette parcelle', cta: 'Demander conseil' }
+    3: { etiquette: 'Fort',   titre: 'Exposition forte au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
+    2: { etiquette: 'Moyen',  titre: 'Exposition moyenne au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
+    1: { etiquette: 'Faible', titre: 'Exposition faible au retrait-gonflement des argiles', cta: 'Demander une étude de projet' },
+    0: { etiquette: 'Nul',    titre: 'Pas d’exposition identifiée sur cette parcelle', cta: 'Demander conseil' }
   };
+
+  function ajouterEtiquette(cible, libelle) {
+    var e = document.createElement('p');
+    e.className = 'etiquette';
+    e.textContent = libelle;
+    cible.appendChild(e);
+  }
 
   function bloc(niveau) {
     var d = document.createElement('div');
@@ -378,6 +691,7 @@
 
     if (donnees.statut === 'hors_perimetre') {
       var h = bloc('hors');
+      ajouterEtiquette(h, 'Hors carte');
       var t = document.createElement('h2');
       t.textContent = 'Cette adresse n’est pas couverte par la carte';
       h.appendChild(t);
@@ -389,6 +703,7 @@
       // (SPEC §1).
       h.appendChild(bouton('Nous contacter', donnees.conversion, feature, donnees.simulation_id));
       resultat.appendChild(h);
+      marquerEchelle(null);
       annoncerHauteur();
       return;
     }
@@ -396,6 +711,8 @@
     var niveau = donnees.zone.code;
     var textes = TEXTES[niveau];
     var v = bloc(niveau);
+
+    ajouterEtiquette(v, textes.etiquette);
 
     var titre = document.createElement('h2');
     titre.textContent = textes.titre;
@@ -422,6 +739,7 @@
 
     v.appendChild(bouton(textes.cta, donnees.conversion, feature, donnees.simulation_id));
     resultat.appendChild(v);
+    marquerEchelle(niveau);
     annoncerHauteur();
   }
 
@@ -441,6 +759,7 @@
     // prévenir la page hôte.
     d.appendChild(bouton('Nous contacter', null, null, null));
     resultat.appendChild(d);
+    marquerEchelle(null);
     annoncerHauteur();
   }
 

@@ -27,6 +27,13 @@
   var cle = source.searchParams.get('key');
   if (!cle) { return; }
 
+  // Seul réglage transmis à l'iframe : `intro=0` coupe l'introduction
+  // pédagogique, pour une intégration en colonne étroite ou sous un texte qui
+  // dit déjà la même chose. Rien d'autre ne passe par ici — le reste de
+  // l'apparence vient de `partner.theme`, côté serveur, pas d'un attribut que
+  // n'importe qui pourrait éditer dans la page hôte.
+  var intro = source.searchParams.get('intro');
+
   // L'URL de base se déduit de l'endroit d'où ce script a été chargé : le
   // domaine changera, et il ne doit être écrit en dur nulle part (SPEC §1).
   var origine = source.origin;
@@ -43,7 +50,8 @@
     for (var i = 0; i < conteneur.children.length; i++) { repli.push(conteneur.children[i]); }
 
     var cadre = document.createElement('iframe');
-    cadre.src = origine + '/embed?key=' + encodeURIComponent(cle);
+    cadre.src = origine + '/embed?key=' + encodeURIComponent(cle)
+      + ('0' === intro ? '&intro=0' : '');
     cadre.title = 'Simulateur d’exposition au retrait-gonflement des argiles';
     cadre.setAttribute('scrolling', 'no');
     cadre.setAttribute('allowtransparency', 'true');

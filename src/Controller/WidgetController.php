@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
+use App\Entity\Partner;
 use App\Exception\ApiProblemException;
 use App\Service\PartnerResolver;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
@@ -61,7 +62,15 @@ final class WidgetController
         $config = json_encode([
             'cle' => $partner->getPublicKey(),
             'api' => $request->getSchemeAndHttpHost(),
-            'theme' => $partner->getTheme(),
+            // Revalidé en lecture : la base reste éditable à la main, et cette
+            // chaîne finit dans le CSSOM de l'iframe. Ici on ignore en silence
+            // — c'est `Partner::setTheme()` qui refuse bruyamment, à l'écriture.
+            'theme' => Partner::normaliserTheme($partner->getTheme()),
+            // L'introduction pédagogique est affichée par défaut : sans elle,
+            // le champ de saisie ne dit pas au visiteur POURQUOI il devrait
+            // s'en servir. `&intro=0` la coupe pour une intégration en colonne
+            // étroite, ou sous un texte qui dit déjà la même chose.
+            'intro' => '0' !== $request->query->get('intro'),
         ], \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_HEX_TAG);
 
         $reponse = $this->page(str_replace('{{CONFIG}}', $config, $html));
