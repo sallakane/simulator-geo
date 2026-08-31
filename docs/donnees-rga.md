@@ -88,7 +88,7 @@ dessiner** (SPEC §6bis) :
 
 | Table | Tolérance | Objets | Sommets | Taille | Sert les zooms |
 |---|---|---|---|---|---|
-| `rga_zone_2026` | — (exacte) | 121 399 | 25 849 868 | 931 Mo | 12 à 15 |
+| `rga_zone_2026` | — (exacte) | 121 399 | 25 849 868 | 916 Mo | 12 à 15 |
 | `rga_zone_2026_g` | 0,0015° ≈ 110 m | 121 399 | 2 254 281 | 53 Mo | 8 à 11 |
 | `rga_zone_2026_gg` | 0,03° ≈ 2,2 km | 1 353 | 546 963 | 10 Mo | 5 à 7 |
 
@@ -103,8 +103,13 @@ essayé et **écarté** : le poids ne bouge pas — ce sont les sommets qui pès
 pas le nombre d'objets — et découper trois géométries géantes coûte 14 s par
 tuile contre 0,5 s.
 
+Tailles relevées en production le 2026-08-31, jour où ces deux tables y ont été
+construites (`pg_total_relation_size`, index compris) — c'est la mesure qui fait
+foi, et c'est celle que reprend `exploitation.md` §5.
+
 Ces deux tables se reconstruisent seules, sans recharger le shapefile :
-`./bin/charger-rga.sh --millesime 2026 --generaliser`.
+`./bin/charger-rga.sh --millesime 2026 --generaliser`. Elles ne survivent pas à
+leur millésime : la règle de rétention les supprime avec lui.
 
 ### Le point le plus important du relevé
 
