@@ -227,6 +227,12 @@ ANALYZE rga_zone;
 Le mapping libellé source → `niveau_code` vit dans un script de migration
 versionné, pas dans le code applicatif.
 
+Puis la **généralisation cartographique** (§6bis) : deux tables dérivées,
+`<table>_g` (tolérance 110 m) et `<table>_gg` (750 m, surfaces > 5 km²), qui ne
+servent qu'à DESSINER aux zooms où la géométrie exacte serait illisible autant
+qu'inabordable. Elles se construisent au chargement, jamais à la volée, et se
+rejouent seules : `./bin/charger-rga.sh --generaliser`.
+
 ### 4.4 Procédure de mise à jour
 
 Le zonage a changé au 1er juillet 2026 ; il rechangera. La procédure doit être
@@ -245,6 +251,10 @@ $EDITOR docs/donnees-rga.md migrations/rga/<annee>-niveaux.sql
 ./bin/charger-rga.sh --millesime <annee> --bascule
 make points                              # régénère les points depuis la donnée servie
 make verifier                            # les rejoue — doit passer intégralement
+
+# 4. Préchauffer les tuiles des zooms bas du NOUVEAU millésime (§6bis).
+#    Après la bascule, jamais avant : le cache est rangé par millésime.
+make tuiles
 ```
 
 Le chargement (étape 2) et la mise en service (étape 3) sont **séparés
@@ -257,6 +267,10 @@ directement. Cette vue expose une projection explicite
 (`id, geom, niveau_code, niveau_libelle, millesime`) : c'est le contrat entre la
 donnée et le code, et il ne doit pas bouger quand le shapefile change de
 colonnes.
+
+La bascule porte les **trois** vues — `rga_zone_courante`, `_g`, `_gg` — dans
+une seule transaction. La carte et le verdict ne doivent jamais, fût-ce une
+seconde, parler de deux millésimes différents (§6bis).
 
 ---
 
@@ -436,6 +450,133 @@ L'application affichée dans l'iframe.
 
 ---
 
+## 6bis. La carte d'exposition
+
+Le verdict dit « votre terrain est en zone moyenne ». La carte montre **où
+passe la limite**, et c'est ce qui le rend vérifiable : le visiteur voit s'il
+est au cœur de la zone ou sur son bord, et reconnaît sa rue. C'est aussi ce
+qu'il a vu ailleurs — la carte de Géorisques est la référence visuelle de ce
+produit.
+
+### La règle qui prime sur toutes les autres
+
+> **La carte dessine. Elle ne décide pas.**
+
+Le niveau annoncé sort de `rga_zone_courante`, géométrie exacte, et de nulle
+part ailleurs (§3). La carte, elle, lit des géométries **simplifiées** dès qu'on
+s'éloigne. Un trait dessiné n'est donc jamais une frontière réglementaire, et le
+widget l'écrit sous la carte.
+
+### `GET /api/v1/tuiles/{z}/{x}/{y}.pbf?key=…&m=…`
+
+Tuiles vectorielles MVT, construites par PostGIS (`ST_AsMVT`). Une seule couche,
+nommée `rga`, un seul attribut, `n` — le `niveau_code`.
+
+| Réponse | Sens |
+|---|---|
+| `200` + protobuf | Des zones exposées dans cette tuile |
+| `204` | Aucune zone exposée ici. **Cas normal sur la moitié du territoire**, pas une panne |
+| `400` | Tuile hors domaine (zoom hors 5–15, ou x/y hors grille) |
+| `403` | Clé refusée |
+| `503` | Zonage absent — **jamais** une tuile vide, qui peindrait « aucune exposition » sur une région entière |
+
+`m` porte le millésime. `/embed` l'inscrit dans le gabarit d'URL au moment où il
+construit la page ; il n'est donc jamais deviné par le client. C'est ce qui rend
+la tuile **immuable** : `max-age=31536000, immutable` quand le millésime annoncé
+est celui en service, `no-store` sinon — une page ouverte avant une bascule ne
+doit rien garder.
+
+Budget de débit **séparé** de celui du verdict (`tuiles_ip`, 600/min) : afficher
+une carte demande une vingtaine de tuiles, et chaque déplacement en demande
+d'autres. Les compter dans `zonage_ip` (30/min) trouerait la carte en silence.
+
+### Trois bandes de zoom, trois géométries
+
+Une tuile z6 construite sur la géométrie exacte pèse 5,2 Mo et coûte 6,4 s :
+25,8 millions de sommets, dont l'écrasante majorité tient dans moins d'un pixel.
+D'où deux tables dérivées, construites **une fois au chargement**
+(`bin/charger-rga.sh`, §4.3) et basculées dans la **même transaction** que
+`rga_zone_courante` — la carte et le verdict ne peuvent jamais parler de deux
+millésimes différents.
+
+| Zoom | Vue lue | Tolérance | Poids | Temps |
+|---|---|---|---|---|
+| 12–15 | `rga_zone_courante` | **exacte** | 0,3–3 Ko | 20–60 ms |
+| 8–11 | `rga_zone_courante_g` | 110 m (+53 Mo) | 5–80 Ko | 5–65 ms |
+| 5–7 | `rga_zone_courante_gg` | 2,2 km (+10 Mo) | 0,08–0,4 Mo | 0,1–0,5 s |
+
+Les tolérances sont calées sur la taille du pixel : ce qui est gommé est ce qui
+n'était de toute façon pas visible. Et **aux zooms où le visiteur regarde
+vraiment sa parcelle (12 et au-delà), la carte lit la géométrie exacte** — un
+test le verrouille.
+
+Au-delà de z15 le client agrandit la dernière tuile reçue : du vectoriel
+agrandi reste net, et c'est autant de tuiles qu'on ne calcule pas.
+
+### Cache
+
+Deux étages, tous deux jetables :
+
+- **disque**, `var/tuiles/<millesime>/z/x/y.pbf`, écriture atomique. Le
+  millésime est dans le *chemin* : une bascule n'invalide rien, elle change de
+  répertoire ;
+- **navigateur**, un an, grâce à `m=`.
+
+`app:tuiles:prechauffer` précalcule les zooms bas — 170 tuiles, 8 Mo, 8 s pour
+z5 à z8 — à lancer **après** chaque bascule. C'est le seul moment où la carte
+serait lente, et il se supprime d'une commande.
+
+### Fond de plan
+
+**IGN Plan v2**, Géoplateforme (`data.geopf.fr`), en WMTS raster, sans clé.
+C'est le fond de la carte de Géorisques : le visiteur retrouve la même image.
+
+Conséquence à assumer, et c'est un **changement de position** par rapport à §9 :
+le navigateur du visiteur appelle un tiers — l'IGN — dès qu'une carte s'affiche.
+Trois limites l'encadrent :
+
+- la carte ne se charge **qu'après** qu'un résultat a été obtenu, donc jamais
+  sans une action explicite du visiteur ;
+- l'IGN est un opérateur public français, sans cookie ni traceur sur ce flux ;
+- la mention « © IGN — Géoplateforme » est affichée sur la carte, comme l'exige
+  la licence.
+
+Repli si les quotas de la Géoplateforme devenaient contraignants : proxifier le
+fond derrière notre domaine, avec cache disque. La contrepartie est que tout le
+trafic se concentrerait sur l'IP du VPS.
+
+### Rendu
+
+**MapLibre GL JS**, version figée dans `public/vendor/`. Servi par notre
+domaine : un CDN ajouterait un tiers dans le chemin critique du widget, et une
+panne qu'on ne saurait pas réparer. Aucune couche `symbol`, donc **aucune police
+à télécharger** — les libellés sont ceux du fond IGN.
+
+Chargé **paresseusement**, à l'affichage du premier résultat : tant que le
+visiteur n'a pas choisi d'adresse, ni MapLibre, ni l'IGN, ni nos tuiles n'ont
+été demandés.
+
+### Ce que la carte doit dire, et que Géorisques ne dit pas
+
+La carte officielle ne dessine **que les zones exposées**. Un secteur blanc s'y
+lit spontanément « pas de donnée », alors qu'il signifie « pas d'exposition ».
+La légende porte donc une **quatrième entrée**, sans couleur :
+« aucune exposition identifiée ». Sans elle, la carte contredit visuellement le
+verdict « nul ».
+
+Les trois couleurs reprennent celles de la carte officielle et **ne sont pas
+thématisables** : un partenaire qui repeindrait « fort » en vert ferait un
+contresens réglementaire. Seul le marqueur porte son accent.
+
+### Dégradation
+
+L'échec de la carte n'est jamais l'échec du verdict. Pas de WebGL, bibliothèque
+qui ne charge pas, zonage absent : le bloc reste masqué, le texte reste affiché.
+Et sous un message de panne, aucune carte — elle laisserait croire à un
+résultat.
+
+---
+
 ## 7. Widget
 
 ### Intégration côté site hôte
@@ -502,6 +643,13 @@ php bin/console app:partner:theme <cle> -        # retour au widget neutre
 police tierce ajouterait une dépendance, une latence, et — pour une police
 servie par un tiers — un transfert d'adresse IP à documenter, alors que le
 widget doit pouvoir tourner **avant tout consentement** (§9).
+
+**Une seule exception, nommée : la carte** (§6bis). Elle apporte MapLibre —
+vendorisé, servi par notre domaine — et un appel au fond de plan de l'IGN. Ce
+n'est pas un assouplissement général de la règle : la carte ne se charge
+qu'**après** un résultat, donc jamais sans une action explicite du visiteur, et
+rien d'autre dans le widget n'a le droit d'appeler un tiers. Le texte, lui,
+n'attend jamais la carte.
 
 **Pas de bascule sur `prefers-color-scheme`.** Le thème qui compte est celui de
 la page hôte, que l'iframe ne peut pas connaître. Suivre l'OS du visiteur
@@ -660,6 +808,13 @@ Ce qui est conservé, et rien d'autre :
 Ce qui reste à surveiller :
 
 - **VPS hébergé dans l'UE** — toujours à vérifier : la table `simulation` y vit.
+- **Le fond de plan de la carte est appelé par le navigateur du visiteur**
+  (`data.geopf.fr`, IGN — §6bis). L'IGN reçoit donc son adresse IP. Trois
+  éléments bornent le sujet : l'appel n'a lieu qu'**après** qu'un résultat a été
+  demandé, jamais au chargement de la page ; l'IGN est un opérateur public
+  français ; ce flux ne pose ni cookie ni traceur. À mentionner dans la
+  politique de confidentialité du partenaire. Pour supprimer complètement ce
+  transfert, il faudrait proxifier le fond derrière notre domaine (§6bis).
 - **Journaux** : IP tronquée, aucune donnée personnelle en clair. Le paramètre
   `insee` (code commune) est la donnée la plus fine qui apparaisse dans nos
   journaux.
@@ -736,11 +891,13 @@ tests manuels sur la matrice de cas limites ci-dessus.
 src/
   Controller/
     ZonageController.php
+    TuilesController.php      # tuiles vectorielles de la carte (§6bis)
     ConversionController.php  # marque le clic vers le formulaire du partenaire
     WidgetController.php      # /embed : valide la clé, pose la CSP, injecte la config
     HealthController.php
   Service/
     ZonageResolver.php        # SQL natif PostGIS, cœur métier
+    TuilesRga.php             # ST_AsMVT + cache disque, la carte (§6bis)
     ObligationMapper.php      # niveau_code → mission + textes réglementaires
     PartnerResolver.php       # résolution de la clé publique
     LienDevis.php             # URL pré-remplie du formulaire du partenaire
@@ -753,14 +910,16 @@ src/
     ApiProblemListener.php
   Command/
     CreatePartnerCommand.php  # app:partner:create — seule porte d'entrée client
+    PrechaufferTuilesCommand.php  # app:tuiles:prechauffer — zooms bas (§6bis)
   Entity/                     # Partner, Simulation
   Security/
     OriginValidator.php
 public/
   widget.js                   # chargeur, < 5 Ko (budget vérifié par un test)
   exemple-integration.html    # page de recette : parcours + dégradation
+  vendor/maplibre-gl-*        # moteur de carte, version figée, servi par nous
 templates/
-  embed.html                  # application iframe (HTML/CSS/JS, zéro dépendance)
+  embed.html                  # application iframe (HTML/CSS/JS + la carte)
 bin/
   charger-rga.sh              # pipeline §4, rejouable (--prod pour le VPS)
 docs/
@@ -1093,6 +1252,8 @@ restauration a été testée au moins une fois — pas décrite, testée.
 - **Mention de la source** requise par la licence Etalab : « Source : BRGM /
   Géorisques — carte d'exposition au retrait-gonflement des argiles, arrêté du
   9 janvier 2026 », visible dans le widget.
+- **Mention du fond de plan** requise par la licence de la Géoplateforme :
+  « © IGN — Géoplateforme », affichée sur la carte elle-même (§6bis).
 - **Avertissement légal** dans le widget : outil d'orientation, ne constitue ni
   un état des risques réglementaire ni un avis juridique ; l'obligation dépend
   aussi du caractère non bâti et constructible du terrain et de la nature de

@@ -76,6 +76,36 @@ millésime, et c'est un contrôle à refaire au prochain.
 Le mapping « valeur source → `niveau_code` » vit dans
 `migrations/rga/2026-niveaux.sql`, pas dans le code applicatif.
 
+### Ce que la carte du widget en tire
+
+Les 121 399 polygones portent **25,8 millions de sommets** (213 en moyenne,
+219 585 pour le plus gros). Dessinée telle quelle, une tuile de zoom 6 pèserait
+5,2 Mo pour 6,4 s de calcul — l'essentiel de ces sommets tenant dans moins d'un
+pixel à cette échelle.
+
+Le chargement construit donc deux tables dérivées, qui ne servent **qu'à
+dessiner** (SPEC §6bis) :
+
+| Table | Tolérance | Objets | Sommets | Taille | Sert les zooms |
+|---|---|---|---|---|---|
+| `rga_zone_2026` | — (exacte) | 121 399 | 25 849 868 | 931 Mo | 12 à 15 |
+| `rga_zone_2026_g` | 0,0015° ≈ 110 m | 121 399 | 2 254 281 | 53 Mo | 8 à 11 |
+| `rga_zone_2026_gg` | 0,03° ≈ 2,2 km | 1 353 | 546 963 | 10 Mo | 5 à 7 |
+
+`_gg` ne retient que les surfaces de plus de 20 km² : à z6 un pixel vaut 2,4 km,
+et 97 524 des 121 399 polygones font moins de 0,5 km². Les garder n'ajouterait
+que du poids invisible — la France dessinée à 750 m et à 2,2 km de tolérance est
+**indiscernable** à l'échelle nationale (comparaison faite en SVG, août 2026),
+pour 30 % de poids en moins sur les tuiles les plus lourdes du service.
+
+Dissoudre par niveau (`ST_Union`, trois multipolygones au lieu de 1 353) a été
+essayé et **écarté** : le poids ne bouge pas — ce sont les sommets qui pèsent,
+pas le nombre d'objets — et découper trois géométries géantes coûte 14 s par
+tuile contre 0,5 s.
+
+Ces deux tables se reconstruisent seules, sans recharger le shapefile :
+`./bin/charger-rga.sh --millesime 2026 --generaliser`.
+
 ### Le point le plus important du relevé
 
 **Il n'existe aucun polygone de niveau 0.** La carte ne dessine que les zones

@@ -244,6 +244,113 @@ docker compose -f compose.prod.yaml exec app php bin/console app:zonage:verifier
 
 ---
 
+## 4bis. La carte
+
+Le verdict dit « zone moyenne ». La carte montre **où passe la limite** — et
+c'est ce qui le rend vérifiable : le visiteur reconnaît sa rue, et voit s'il est
+au cœur de la zone ou sur son bord.
+
+```mermaid
+flowchart LR
+    ADR["adresse choisie"] --> V["verdict<br/>géométrie EXACTE"]
+    ADR --> C["carte"]
+    C --> ML["MapLibre GL<br/>vendorisé, chargé à ce moment-là"]
+    ML --> F["fond IGN Plan v2<br/>data.geopf.fr"]
+    ML --> T["/api/v1/tuiles/z/x/y.pbf<br/>PostGIS ST_AsMVT"]
+    T --> B{"zoom ?"}
+    B -->|"12-15"| E[("rga_zone_courante<br/>exacte")]
+    B -->|"8-11"| G[("_g — 110 m")]
+    B -->|"5-7"| GG[("_gg — 2,2 km")]
+```
+
+### La règle qui prime sur toutes les autres
+
+> **La carte dessine. Elle ne décide pas.**
+
+Le niveau annoncé sort de `rga_zone_courante`, géométrie exacte, et de nulle part
+ailleurs. La carte, elle, lit des géométries simplifiées dès qu'on s'éloigne : un
+trait dessiné n'est jamais une frontière réglementaire, et le widget l'écrit sous
+la carte.
+
+**Aux zooms où le visiteur regarde vraiment sa parcelle — 12 et au-delà — la
+carte lit la géométrie exacte.** Un test le verrouille.
+
+### Pourquoi trois bandes
+
+Une tuile z6 construite sur la géométrie exacte pèse **5,2 Mo** et coûte
+**6,4 s** : 25,8 millions de sommets, dont l'écrasante majorité tient dans moins
+d'un pixel. Deux tables dérivées, construites au chargement et basculées dans la
+**même transaction** que `rga_zone_courante`, règlent la question.
+
+| Zoom | Vue | Tolérance | Poids | Temps |
+|---|---|---|---|---|
+| 12–15 | `rga_zone_courante` | exacte | 0,3–3 Ko | 20–60 ms |
+| 8–11 | `rga_zone_courante_g` | 110 m (+53 Mo) | 5–85 Ko | 5–65 ms |
+| 5–7 | `rga_zone_courante_gg` | 2,2 km (+10 Mo) | 80–400 Ko | 0,1–0,5 s |
+
+Au-delà de z15, le client agrandit la dernière tuile reçue — du vectoriel
+agrandi reste net.
+
+Deux pistes ont été mesurées puis **écartées** : dissoudre par niveau
+(`ST_Union`) ne fait pas maigrir la tuile, ce sont les sommets qui pèsent, et
+découper trois multipolygones géants coûte 14 s au lieu de 0,5 s ; garder 750 m
+de tolérance au lieu de 2,2 km coûte 30 % de poids pour un tracé **indiscernable**
+à l'échelle nationale.
+
+### Le cache, et le millésime dans l'URL
+
+```
+GET /api/v1/tuiles/14/8301/5649.pbf?key=pk_…&m=2026
+```
+
+`m` est inscrit dans la page par `/embed`, jamais deviné par le client. C'est ce
+qui rend la tuile **immuable** : `max-age=31536000, immutable` quand le millésime
+annoncé est celui en service, `no-store` sinon — une page ouverte avant une
+bascule ne garde rien.
+
+Côté serveur, `var/tuiles/<millesime>/z/x/y.pbf`. Le millésime est dans le
+*chemin* : une bascule n'invalide rien, elle change de répertoire.
+
+```bash
+make tuiles     # 170 tuiles, 8 Mo, 8 s — z5 à z8, APRÈS chaque bascule
+```
+
+C'est le seul moment où la carte serait lente (0,5 s au dézoom national), et il
+se supprime d'une commande. Ensuite tout sort du disque en ~20 ms.
+
+### Ce que la carte dit, et que Géorisques ne dit pas
+
+La carte officielle ne dessine **que les zones exposées**. Un secteur blanc s'y
+lit spontanément « pas de donnée », alors qu'il signifie « pas d'exposition ». La
+légende porte donc une **quatrième entrée, sans couleur** : « aucune exposition
+identifiée ». Sans elle, la carte contredirait visuellement le verdict « nul ».
+
+Les trois couleurs sont celles de la carte officielle et **ne sont pas
+thématisables** — un partenaire qui repeindrait « fort » en vert ferait un
+contresens. Seul le marqueur porte son accent.
+
+### Ce que la carte a coûté aux règles du widget
+
+Elle en lève deux, explicitement (SPEC §7 et §9) :
+
+| Règle | Ce qui change |
+|---|---|
+| Aucune dépendance | MapLibre GL, **vendorisé** dans `public/vendor/`, version figée, servi par notre domaine — pas un CDN |
+| Aucun appel tiers avant consentement | Le fond IGN est appelé par le navigateur du visiteur, **mais seulement après** qu'un résultat a été demandé |
+
+Ce n'est pas un assouplissement général : rien d'autre dans le widget n'a le
+droit d'appeler un tiers, et l'IGN reçoit une adresse IP — à mentionner dans la
+politique de confidentialité du partenaire. Pour supprimer ce transfert, il
+faudrait proxifier le fond derrière notre domaine ; la contrepartie serait de
+concentrer tout le trafic sur l'IP du VPS.
+
+**L'échec de la carte n'est jamais l'échec du verdict** : pas de WebGL,
+bibliothèque qui ne charge pas, zonage absent — le bloc reste masqué, le texte
+reste affiché. Et sous un message de panne, aucune carte : elle laisserait croire
+à un résultat.
+
+---
+
 ## 5. Le widget chez le partenaire
 
 Une balise, rien d'autre. Le contenu du `<div>` est le **repli statique** : il
@@ -385,12 +492,14 @@ migrations/rga/*.sql        Mapping valeur source → niveau_code, versionné pa
 data/                       Shapefiles — gitignoré, plusieurs centaines de Mo
 
 src/Service/ZonageResolver.php   Le point-dans-polygone (§3)
+src/Service/TuilesRga.php        Les tuiles vectorielles de la carte (§4bis)
 src/Service/ObligationMapper.php niveau_code → mission NF P 94-500 + textes
 src/Service/LienDevis.php        URL pré-remplie du formulaire du partenaire
-src/Controller/                  zonage · conversion · embed · health
-src/Command/                     app:partner:create · app:partner:theme · app:zonage:verifier
+src/Controller/                  zonage · tuiles · conversion · embed · health
+src/Command/                     app:partner:create · app:partner:theme · app:zonage:verifier · app:tuiles:prechauffer
 public/widget.js                 Chargeur embarqué sur le site hôte, < 5 Ko
-templates/embed.html             L'application iframe : contenu, style, logique (§5)
+public/vendor/maplibre-gl-*      Le moteur de carte, version figée, servi par nous
+templates/embed.html             L'application iframe : contenu, style, carte, logique (§4bis, §5)
 
 infra/                      Unité systemd, snippet Caddy, sauvegarde
 docs/donnees-rga.md         Millésime, téléchargement, relevé du shapefile
