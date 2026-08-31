@@ -18,7 +18,7 @@ COMPOSE := docker compose --env-file .env --env-file .env.local
 APP     := $(COMPOSE) exec app
 
 .DEFAULT_GOAL := help
-.PHONY: help up down fresh build logs sh psql migrate test composer rga zonage-demo verifier ogrinfo points
+.PHONY: help up down fresh build logs sh psql migrate test composer rga zonage-demo verifier ogrinfo points tuiles
 
 help: ## Liste les cibles
 	@grep -hE '^[a-z.-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -89,3 +89,6 @@ ogrinfo: ## Relève champs, valeurs et SRID du shapefile (SPEC §4.1)
 	@shp=$$(find data -maxdepth 1 -name '*.shp' | head -1); \
 	[ -n "$$shp" ] || { echo "Aucun .shp dans data/ — cf. docs/donnees-rga.md"; exit 1; }; \
 	$(COMPOSE) run --rm gis ogrinfo -so -al "/data/$$(basename $$shp)"
+
+tuiles: ## Précalcule les tuiles des zooms bas (SPEC §6bis) — après chaque bascule
+	$(APP) php bin/console app:tuiles:prechauffer --jusqu-a=8

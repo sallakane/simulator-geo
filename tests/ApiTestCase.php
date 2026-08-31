@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests;
 
 use App\Entity\Partner;
+use App\Service\TuilesRga;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
@@ -21,6 +22,8 @@ use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 abstract class ApiTestCase extends WebTestCase
 {
     protected const CLE = 'pk_test';
+    /** Millésime porté par le zonage synthétique — voir la fixture. */
+    protected const MILLESIME_DEMO = 'demo';
     protected const ORIGINE = 'https://exemple-partenaire.fr';
     protected const FORMULAIRE = 'https://exemple-partenaire.fr/demande-devis';
 
@@ -36,6 +39,7 @@ abstract class ApiTestCase extends WebTestCase
         // partagé) : sans remise à zéro, le 15e test se prendrait le 429 du
         // précédent.
         static::getContainer()->get('cache.rate_limiter')->clear();
+        $this->purgerTuiles();
     }
 
     protected function db(): Connection
@@ -58,6 +62,16 @@ abstract class ApiTestCase extends WebTestCase
         $this->db()->executeStatement('DROP VIEW IF EXISTS rga_zone_courante_g');
         $this->db()->executeStatement('DROP VIEW IF EXISTS rga_zone_courante_gg');
         $this->db()->executeStatement('DROP TABLE IF EXISTS rga_zone_synthetique');
+    }
+
+    /**
+     * Le cache disque des tuiles survit d'un test à l'autre : sans purge, un
+     * test qui supprime le zonage lirait la tuile déposée par le précédent, et
+     * passerait pour de mauvaises raisons.
+     */
+    protected function purgerTuiles(): void
+    {
+        static::getContainer()->get(TuilesRga::class)->purger(self::MILLESIME_DEMO);
     }
 
     protected function creerPartenaire(bool $actif = true): Partner
