@@ -256,6 +256,63 @@
   .cta:hover { filter: brightness(1.12); }
   .cta:active { transform: translateY(1px); }
 
+  /* ──────────────────────────────────────────────────────────── la carte */
+  /* La carte n'est pas un ornement : elle est ce qui rend le verdict
+     vérifiable. Le visiteur voit sa parcelle, la zone qui la contient et ses
+     limites — il peut constater qu'il est au bord, ou au milieu.
+
+     Elle reste pourtant SOUS le verdict, et jamais à sa place : c'est le texte
+     qui engage, calculé sur la géométrie exacte ; le tracé, lui, est simplifié
+     dès qu'on s'éloigne (SPEC §6bis). */
+  .carte-bloc { margin-top: 18px; }
+  .carte-bloc[hidden] { display: none; }
+
+  .carte {
+    position: relative;
+    height: 380px;
+    background: var(--surface);
+    border: 1px solid var(--bord);
+    border-radius: var(--r-carte);
+    overflow: hidden;   /* les commandes MapLibre débordent des coins arrondis */
+  }
+
+  /* Le marqueur : une goutte à l'accent du partenaire, la seule chose de la
+     carte qui se thématise. Les couleurs des zones, elles, portent un sens
+     réglementaire et ne bougent jamais (même règle que l'échelle). */
+  .marqueur {
+    width: 26px; height: 34px;
+    color: var(--accent);
+    filter: drop-shadow(0 2px 3px rgba(16,24,32,.35));
+    cursor: default;
+  }
+
+  .legende {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+    margin: 12px 0 0; padding: 0; list-style: none;
+    font-size: .8125rem; color: var(--texte-doux);
+  }
+  .legende li { display: inline-flex; align-items: center; gap: 7px; }
+  .legende .pastille-legende {
+    width: 15px; height: 15px; border-radius: 4px;
+    border: 1px solid rgba(16,24,32,.18);
+  }
+
+  /* Deux précisions qui évitent deux contresens, et qui ne sont pas sur la
+     carte de Géorisques :
+       · une zone sans couleur n'est pas une zone non cartographiée ;
+       · un tracé simplifié n'est pas une frontière réglementaire. */
+  .carte-note {
+    margin: 10px 0 0; font-size: .8125rem; line-height: 1.5; color: var(--texte-doux);
+  }
+
+  /* La bulle « utilisez ctrl + molette » de MapLibre, réécrite aux couleurs du
+     widget : sans elle, faire défiler la page hôte avec la souris au-dessus de
+     la carte zoomerait la carte au lieu de descendre dans la page. */
+  .maplibregl-map { font: inherit; }
+  .maplibregl-cooperative-gesture-screen {
+    background: rgba(16,24,32,.55); font-size: .9375rem; font-weight: 600;
+  }
+
   /* ───────────────────────────────────────────── l'échelle des 4 niveaux */
   .echelle { margin: 28px 0 0; }
   .echelle h2 {
@@ -317,6 +374,8 @@
     .panneau-tete { padding: 16px 14px 14px; }
     .panneau-corps { padding: 16px 14px 18px; }
     .verdict { padding: 16px 14px; }
+
+    .carte { height: 300px; }
 
     .echelle { margin-top: 22px; }
     .echelle ol { gap: 10px; }
@@ -399,6 +458,21 @@
 
       <div id="etat" class="chargement" role="status" aria-live="polite"></div>
       <div id="resultat" aria-live="polite"></div>
+
+      <!-- La carte est vide et masquée tant qu'aucune adresse n'a été choisie :
+           rien de MapLibre, rien de l'IGN, rien du serveur de tuiles n'est
+           chargé avant que le visiteur ait demandé un résultat. -->
+      <div class="carte-bloc" id="carte-bloc" hidden>
+        <div class="carte" id="carte" role="img"
+             aria-label="Carte d’exposition au retrait-gonflement des argiles autour de l’adresse recherchée"></div>
+        <ul class="legende" id="legende"></ul>
+        <p class="carte-note">
+          Les secteurs sans couleur ne sont pas des zones non cartographiées : la carte officielle
+          ne dessine que les zones exposées, et leur absence signifie qu’aucune argile n’y est
+          identifiée. Le tracé est simplifié aux échelles larges ; le niveau annoncé ci-dessus, lui,
+          est calculé sur la géométrie exacte.
+        </p>
+      </div>
     </div>
   </section>
 
@@ -615,6 +689,248 @@
     });
   }
 
+  /* ----------------------------------------------------------------- carte */
+  /**
+   * La carte d'exposition (SPEC §6bis).
+   *
+   * Trois principes, dans cet ordre :
+   *
+   *   1. Elle ne se charge JAMAIS avant qu'un résultat existe. Tant que le
+   *      visiteur n'a pas choisi d'adresse, ni MapLibre, ni le fond IGN, ni nos
+   *      tuiles n'ont été demandés — la page reste aussi légère qu'avant.
+   *   2. Son échec n'est jamais l'échec du verdict. Pas de WebGL, bibliothèque
+   *      qui ne charge pas, tuiles indisponibles : le bloc reste masqué, le
+   *      texte reste affiché, et personne ne voit un cadre gris.
+   *   3. Elle montre, elle ne décide pas. Le tracé est simplifié aux échelles
+   *      larges ; le niveau annoncé vient de la géométrie exacte.
+   */
+
+  /* Les couleurs de la carte reprennent celles de la carte officielle. Elles ne
+     sont PAS thématisables : un partenaire qui repeindrait « fort » en vert
+     ferait un contresens réglementaire (même règle que l'échelle des niveaux).
+     Seul le marqueur porte son accent. */
+  var COULEURS = {
+    1: { fond: '#cbe7b4', trait: '#7ba85e', libelle: 'Faible' },
+    2: { fond: '#f3dfa2', trait: '#c39b32', libelle: 'Moyen' },
+    3: { fond: '#eeaea6', trait: '#c96a5e', libelle: 'Fort' }
+  };
+
+  var FOND_IGN = 'https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile'
+    + '&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM'
+    + '&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png';
+
+  var carteBloc = document.getElementById('carte-bloc');
+  var carte = null;          // instance MapLibre, créée une seule fois
+  var marqueur = null;
+  var bibliotheque = null;   // promesse de chargement, mutualisée
+
+  /** WebGL absent ou désactivé : il vaut mieux pas de carte qu'un cadre vide. */
+  function webglDisponible() {
+    try {
+      var c = document.createElement('canvas');
+      return !!(c.getContext('webgl2') || c.getContext('webgl'));
+    } catch (e) { return false; }
+  }
+
+  /**
+   * MapLibre est servi par NOTRE domaine, version figée dans public/vendor/ :
+   * un CDN ajouterait un tiers de plus dans le chemin critique du widget, et
+   * une panne que nous ne saurions pas réparer.
+   */
+  function chargerBibliotheque() {
+    if (bibliotheque) { return bibliotheque; }
+
+    bibliotheque = new Promise(function (ok, echec) {
+      var feuille = document.createElement('link');
+      feuille.rel = 'stylesheet';
+      feuille.href = config.api + '/vendor/maplibre-gl-5.6.1.css';
+      document.head.appendChild(feuille);
+
+      var script = document.createElement('script');
+      script.src = config.api + '/vendor/maplibre-gl-5.6.1.js';
+      script.async = true;
+      script.onload = function () { window.maplibregl ? ok(window.maplibregl) : echec(); };
+      script.onerror = echec;
+      document.head.appendChild(script);
+    });
+
+    return bibliotheque;
+  }
+
+  function styleCarte() {
+    return {
+      version: 8,
+      sources: {
+        fond: {
+          type: 'raster',
+          tiles: [FOND_IGN],
+          tileSize: 256,
+          maxzoom: 19,
+          attribution: '© IGN — Géoplateforme'
+        },
+        rga: {
+          type: 'vector',
+          // Le millésime est dans l'URL : les tuiles sont donc immuables et se
+          // mettent en cache pour un an. Une bascule change l'URL, et le cache
+          // du visiteur se renouvelle tout seul, sans purge à distance.
+          tiles: [config.api + '/api/v1/tuiles/{z}/{x}/{y}.pbf'
+            + '?key=' + encodeURIComponent(config.cle)
+            + '&m=' + encodeURIComponent(config.millesime)],
+          minzoom: 5,
+          // 15 et non 18 : au-delà, le client agrandit la dernière tuile reçue.
+          // Du vectoriel agrandi reste net, et c'est autant de tuiles qu'on ne
+          // calcule ni ne transporte.
+          maxzoom: 15,
+          attribution: 'BRGM / Géorisques'
+        }
+      },
+      // Aucune couche de type `symbol` : pas de texte, donc aucune police à
+      // télécharger. Les libellés sont ceux du fond IGN.
+      layers: [
+        { id: 'fond', type: 'raster', source: 'fond' },
+        {
+          id: 'rga-surface', type: 'fill', source: 'rga', 'source-layer': 'rga',
+          paint: {
+            'fill-color': ['match', ['get', 'n'],
+              1, COULEURS[1].fond, 2, COULEURS[2].fond, 3, COULEURS[3].fond, '#cccccc'],
+            // Assez opaque pour que la zone se lise d'un coup d'œil, assez
+            // transparente pour qu'on reconnaisse sa rue en dessous.
+            'fill-opacity': 0.5
+          }
+        },
+        {
+          id: 'rga-contour', type: 'line', source: 'rga', 'source-layer': 'rga',
+          paint: {
+            'line-color': ['match', ['get', 'n'],
+              1, COULEURS[1].trait, 2, COULEURS[2].trait, 3, COULEURS[3].trait, '#999999'],
+            'line-width': 1,
+            'line-opacity': 0.75
+          }
+        }
+      ]
+    };
+  }
+
+  function elementMarqueur() {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'marqueur');
+    svg.setAttribute('viewBox', '0 0 24 32');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.innerHTML = '<path fill="currentColor" stroke="#fff" stroke-width="1.5" '
+      + 'd="M12 1C6.8 1 2.6 5.2 2.6 10.4c0 6.9 8 19.1 8.4 19.6a1.2 1.2 0 0 0 2 0'
+      + 'c.4-.5 8.4-12.7 8.4-19.6C21.4 5.2 17.2 1 12 1z"/>'
+      + '<circle cx="12" cy="10.4" r="3.4" fill="#fff"/>';
+    return svg;
+  }
+
+  function remplirLegende() {
+    var legende = document.getElementById('legende');
+    if (legende.children.length) { return; }
+
+    [1, 2, 3].forEach(function (n) {
+      var li = document.createElement('li');
+      var pastille = document.createElement('span');
+      pastille.className = 'pastille-legende';
+      pastille.style.background = COULEURS[n].fond;
+      pastille.style.borderColor = COULEURS[n].trait;
+      li.appendChild(pastille);
+      li.appendChild(document.createTextNode(COULEURS[n].libelle));
+      legende.appendChild(li);
+    });
+
+    // La quatrième entrée n'existe pas chez Géorisques, et c'est précisément
+    // celle qui manque : sans elle, un secteur blanc se lit « pas de donnée »
+    // alors qu'il se lit « pas d'exposition ».
+    var nul = document.createElement('li');
+    var vide = document.createElement('span');
+    vide.className = 'pastille-legende';
+    vide.style.background = 'transparent';
+    nul.appendChild(vide);
+    nul.appendChild(document.createTextNode('Sans couleur : aucune exposition identifiée'));
+    legende.appendChild(nul);
+  }
+
+  /**
+   * Affiche — ou recentre — la carte sur le point interrogé. Appelée pour TOUS
+   * les résultats, y compris « hors périmètre » : voir que Paris n'est pas
+   * couverte vaut mieux que le lire (SPEC §1, aucune réponse n'est un
+   * cul-de-sac).
+   */
+  function afficherCarte(lat, lon) {
+    if (!config.millesime || !webglDisponible()) { return; }
+
+    carteBloc.hidden = false;
+    remplirLegende();
+    annoncerHauteur();
+
+    chargerBibliotheque().then(function (gl) {
+      if (carte) {
+        carte.jumpTo({ center: [lon, lat], zoom: 14 });
+        marqueur.setLngLat([lon, lat]);
+        carte.resize();
+        return;
+      }
+
+      carte = new gl.Map({
+        container: 'carte',
+        style: styleCarte(),
+        center: [lon, lat],
+        zoom: 14,
+        minZoom: 5,
+        maxZoom: 18,
+        // La carte vit dans une iframe posée au milieu de la page d'un
+        // partenaire : sans ce réglage, faire défiler la page avec la souris
+        // au-dessus de la carte zoomerait la carte au lieu de descendre. Sur
+        // téléphone, un doigt fait défiler la page, deux manipulent la carte.
+        cooperativeGestures: true,
+        // Ni boussole ni inclinaison : une carte réglementaire se lit au nord.
+        dragRotate: false,
+        pitchWithRotate: false,
+        touchPitch: false,
+        attributionControl: { compact: true },
+        locale: {
+          'CooperativeGesturesHandler.WindowsHelpText': 'Ctrl + molette pour zoomer',
+          'CooperativeGesturesHandler.MacHelpText': '⌘ + molette pour zoomer',
+          'CooperativeGesturesHandler.MobileHelpText': 'Deux doigts pour déplacer la carte'
+        }
+      });
+
+      carte.touchZoomRotate.disableRotation();
+      carte.addControl(new gl.NavigationControl({ showCompass: false }), 'top-left');
+      carte.addControl(new gl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left');
+
+      marqueur = new gl.Marker({ element: elementMarqueur(), anchor: 'bottom' })
+        .setLngLat([lon, lat])
+        .addTo(carte);
+
+      // La hauteur de l'iframe se recalcule une fois la carte peinte : le
+      // conteneur a sa taille avant, mais les commandes et l'attribution
+      // arrivent après.
+      carte.on('load', function () { carte.resize(); annoncerHauteur(); });
+
+      // Une tuile de FOND manquante se pardonne : les zones restent lisibles
+      // sur un carré gris. Une tuile d'EXPOSITION manquante, non — la carte
+      // afficherait alors des rues sans la moindre couleur, ce qui se lit
+      // « aucune exposition » juste à côté d'un verdict « exposition forte ».
+      // Dans ce cas la carte se retire entièrement : mieux vaut pas de carte
+      // qu'une carte qui dit le contraire du texte.
+      carte.on('error', function (e) {
+        if (e && e.sourceId === 'rga') { masquerCarte(); }
+      });
+    }).catch(function () {
+      // MapLibre n'a pas chargé : on remet la carte hors de vue plutôt que de
+      // laisser un rectangle vide sous le verdict.
+      carteBloc.hidden = true;
+      annoncerHauteur();
+    });
+  }
+
+  function masquerCarte() {
+    if (carteBloc.hidden) { return; }
+    carteBloc.hidden = true;
+    annoncerHauteur();
+  }
+
   /* --------------------------------------------------------------- verdict */
   var TEXTES = {
     3: { etiquette: 'Fort',   titre: 'Exposition forte au retrait-gonflement des argiles', cta: 'Demander un devis pour l’étude G1' },
@@ -758,6 +1074,9 @@
       h.appendChild(bouton('Nous contacter', donnees.conversion, feature, donnees.simulation_id));
       resultat.appendChild(h);
       marquerEchelle(null);
+      // La carte s'affiche quand même : constater que Paris n'est pas couverte
+      // par la carte officielle vaut mieux que le lire.
+      afficherCarte(feature.geometry.coordinates[1], feature.geometry.coordinates[0]);
       annoncerHauteur();
       return;
     }
@@ -794,6 +1113,7 @@
     v.appendChild(bouton(textes.cta, donnees.conversion, feature, donnees.simulation_id));
     resultat.appendChild(v);
     marquerEchelle(niveau);
+    afficherCarte(feature.geometry.coordinates[1], feature.geometry.coordinates[0]);
     annoncerHauteur();
   }
 
@@ -814,6 +1134,8 @@
     d.appendChild(bouton('Nous contacter', null, null, null));
     resultat.appendChild(d);
     marquerEchelle(null);
+    // Une carte sous un message de panne suggérerait que le résultat est là.
+    masquerCarte();
     annoncerHauteur();
   }
 

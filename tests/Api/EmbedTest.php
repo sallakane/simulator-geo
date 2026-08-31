@@ -143,6 +143,82 @@ final class EmbedTest extends ApiTestCase
     }
 
     /**
+     * Le millésime est INSCRIT dans la page, et c'est lui qui rend l'URL des
+     * tuiles immuable (SPEC §6bis). S'il disparaissait de la configuration, la
+     * carte ne se chargerait plus du tout — silencieusement.
+     */
+    public function testLeMillesimeEstTransmisPourLesTuiles(): void
+    {
+        $this->chargerZonageSynthetique();
+        $this->creerPartenaire();
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE]);
+
+        self::assertStringContainsString('"millesime":"'.self::MILLESIME_DEMO.'"',
+            (string) $this->client->getResponse()->getContent());
+    }
+
+    /**
+     * Zonage absent : la page doit rester servie, et la carte s'abstenir. Un
+     * simulateur sans carte reste un simulateur ; une carte vide ferait croire
+     * à une absence d'exposition.
+     */
+    public function testSansZonageLaPageEstServieSansCarte(): void
+    {
+        $this->supprimerZonage();
+        $this->creerPartenaire();
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE]);
+
+        self::assertResponseIsSuccessful();
+        self::assertStringContainsString('"millesime":null',
+            (string) $this->client->getResponse()->getContent());
+
+        $this->chargerZonageSynthetique();
+    }
+
+    /**
+     * Le cas de la mise à jour du code : le millésime est en service, mais les
+     * vues de généralisation n'ont pas encore été construites. `/embed` doit
+     * alors taire la carte — sinon le visiteur verrait un fond de plan SANS
+     * aucune zone, à côté d'un verdict « exposition forte ». Une carte vide se
+     * lit « aucune exposition ».
+     */
+    public function testSansVuesDeGeneralisationLaCarteNEstPasAnnoncee(): void
+    {
+        $this->chargerZonageSynthetique();
+        $this->creerPartenaire();
+
+        $this->db()->executeStatement('DROP VIEW rga_zone_courante_gg');
+
+        $this->client->request('GET', '/embed', ['key' => self::CLE]);
+
+        self::assertResponseIsSuccessful();
+        self::assertStringContainsString('"millesime":null',
+            (string) $this->client->getResponse()->getContent());
+
+        $this->chargerZonageSynthetique();
+    }
+
+    /**
+     * MapLibre est servi par NOTRE domaine, version figée : un CDN ajouterait
+     * un tiers dans le chemin critique du widget, et une panne qu'on ne
+     * saurait pas réparer. Le gabarit ne doit donc citer aucun autre hôte que
+     * celui du fond de plan officiel.
+     */
+    public function testLaCarteNeChargeAucunScriptDeTiers(): void
+    {
+        $gabarit = (string) file_get_contents(\dirname(__DIR__, 2).'/templates/embed.html');
+
+        self::assertStringContainsString('/vendor/maplibre-gl-', $gabarit);
+        self::assertFileExists(\dirname(__DIR__, 2).'/public/vendor/maplibre-gl-5.6.1.js');
+
+        foreach (['unpkg.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'googleapis.com'] as $tiers) {
+            self::assertStringNotContainsString($tiers, $gabarit);
+        }
+    }
+
+    /**
      * Le chargeur s'exécute sur des sites tiers : chaque kilo-octet est un
      * risque, et le budget de §7 est de 5 Ko. Un test le rappelle mieux qu'un
      * commentaire.

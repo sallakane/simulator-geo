@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\Partner;
 use App\Exception\ApiProblemException;
 use App\Service\PartnerResolver;
+use App\Service\TuilesRga;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -29,6 +30,7 @@ final class WidgetController
 {
     public function __construct(
         private readonly PartnerResolver $partners,
+        private readonly TuilesRga $tuiles,
         #[Autowire('%kernel.project_dir%')]
         private readonly string $projectDir,
         #[Autowire('%kernel.environment%')]
@@ -71,6 +73,16 @@ final class WidgetController
             // s'en servir. `&intro=0` la coupe pour une intégration en colonne
             // étroite, ou sous un texte qui dit déjà la même chose.
             'intro' => '0' !== $request->query->get('intro'),
+            // Le millésime est inscrit dans la page, pas déduit par le client :
+            // c'est lui qui rend l'URL des tuiles immuable, donc cachable pour
+            // un an.
+            //
+            // `null` dès que la carte n'est pas servable — zonage absent, ou
+            // vues de généralisation pas encore construites après une mise à
+            // jour du code. La carte ne s'affiche alors pas du tout, ce qui
+            // vaut infiniment mieux qu'un fond de plan sans zones à côté d'un
+            // verdict « exposition forte ».
+            'millesime' => $this->tuiles->carteDisponible() ? $this->tuiles->millesime() : null,
         ], \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_HEX_TAG);
 
         $reponse = $this->page(str_replace('{{CONFIG}}', $config, $html));
