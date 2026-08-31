@@ -52,7 +52,11 @@ abstract class ApiTestCase extends WebTestCase
 
     protected function supprimerZonage(): void
     {
+        // Les trois vues de la carte s'appuient sur la même table : sans les
+        // supprimer d'abord, le DROP TABLE échouerait sur leur dépendance.
         $this->db()->executeStatement('DROP VIEW IF EXISTS rga_zone_courante');
+        $this->db()->executeStatement('DROP VIEW IF EXISTS rga_zone_courante_g');
+        $this->db()->executeStatement('DROP VIEW IF EXISTS rga_zone_courante_gg');
         $this->db()->executeStatement('DROP TABLE IF EXISTS rga_zone_synthetique');
     }
 

@@ -22,6 +22,8 @@
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 DROP VIEW IF EXISTS rga_zone_courante;
+DROP VIEW IF EXISTS rga_zone_courante_g;
+DROP VIEW IF EXISTS rga_zone_courante_gg;
 DROP TABLE IF EXISTS rga_zone_synthetique;
 
 CREATE TABLE rga_zone_synthetique (
@@ -42,3 +44,10 @@ ANALYZE rga_zone_synthetique;
 
 -- Le code n'interroge QUE cette vue, jamais une table millésimée (SPEC §4.4).
 CREATE VIEW rga_zone_courante AS SELECT * FROM rga_zone_synthetique;
+
+-- Les deux niveaux de généralisation de la carte (SPEC §2.5). Sur trois carrés,
+-- simplifier n'a aucun sens : les vues pointent la même table. Ce qui compte
+-- ici est que le service de tuiles trouve les trois vues qu'il attend, dans le
+-- même état qu'en production.
+CREATE VIEW rga_zone_courante_g  AS SELECT geom, niveau_code FROM rga_zone_synthetique;
+CREATE VIEW rga_zone_courante_gg AS SELECT geom, niveau_code FROM rga_zone_synthetique;

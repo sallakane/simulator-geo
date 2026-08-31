@@ -6,6 +6,7 @@
 #   ./bin/charger-rga.sh                       # dev, millésime 2026
 #   ./bin/charger-rga.sh --prod --switch       # VPS, puis bascule de la vue
 #   ./bin/charger-rga.sh --bascule             # met en service, sans recharger
+#   ./bin/charger-rga.sh --generaliser         # rejoue les niveaux de généralisation
 #   ./bin/charger-rga.sh --points              # regénère le jeu de test (§10)
 #   ./bin/charger-rga.sh --millesime 2029 --shp data/Expo_2029_L93.shp --srs EPSG:2154
 #
@@ -22,6 +23,7 @@ ENCODING="${SHP_ENCODING:-LATIN1}"   # dépend du .dbf réel — relevé en §4.
 S_SRS="${SHP_SRS:-EPSG:2154}"        # Lambert 93 annoncé par la source — à confirmer en §4.1
 SWITCH=0
 BASCULE_SEULE=0
+GENERALISER_SEULE=0
 POINTS=0
 COMPOSE=(docker compose)
 
@@ -34,6 +36,7 @@ while [ $# -gt 0 ]; do
     --srs)        S_SRS="$2"; shift 2 ;;
     --switch)     SWITCH=1; shift ;;
     --bascule)    SWITCH=1; BASCULE_SEULE=1; shift ;;
+    --generaliser) GENERALISER_SEULE=1; shift ;;  # action autonome : rejoue §2.5 sans recharger
     --points)     POINTS=1; shift ;;   # action autonome : lit rga_zone_courante
     -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
@@ -89,13 +92,99 @@ SELECT jsonb_pretty(jsonb_agg(p)) FROM (
 SQL
 }
 
+# ── Généralisation cartographique ────────────────────────────────────────────
+# La carte du widget doit se dézoomer jusqu'à la France entière. Or une tuile
+# vectorielle z=6 construite sur la géométrie exacte pèse 5,2 Mo et coûte 6,4 s
+# (mesuré sur le millésime 2026) : 25,8 millions de sommets dont l'écrasante
+# majorité tient dans moins d'un pixel.
+#
+# D'où deux tables dérivées, construites UNE fois au chargement plutôt qu'à
+# chaque tuile. Elles ne servent qu'à DESSINER : la réponse d'exposition, elle,
+# ne sort jamais d'ailleurs que de rga_zone_courante (§3). Une frontière
+# simplifiée ne doit jamais devenir une frontière juridique.
+#
+#   _g   tolérance 0,0015° ≈ 110 m  → z 8-11   53 Mo   2,25 M sommets
+#   _gg  tolérance 0,03°   ≈ 2,2 km → z 5-7    surfaces > 20 km² seulement
+#
+# Les tolérances sont calées sur la taille du pixel : 110 m vaut moins d'un
+# pixel à z10, 2,2 km moins d'un pixel à z5. Ce qui disparaît est ce qui
+# n'était de toute façon pas visible — la France dessinée aux deux tolérances
+# est indiscernable à l'échelle nationale (comparaison faite, cf.
+# docs/donnees-rga.md), pour 30 % de poids en moins sur les tuiles les plus
+# lourdes du service.
+#
+# Dissoudre par niveau (ST_Union) a été essayé et écarté : le poids ne bouge
+# pas — ce sont les sommets qui pèsent, pas le nombre d'objets — et découper
+# trois multipolygones géants coûte 14 s par tuile au lieu de 0,5 s.
+#
+# ST_SimplifyPreserveTopology et non ST_Simplify : ce dernier peut produire des
+# polygones qui se croisent, et ST_AsMVTGeom les rejetterait silencieusement —
+# des trous dans la carte, sans la moindre erreur.
+generaliser() {
+  say "Généralisation cartographique de $TABLE (§2.5)"
+  # CASCADE : si ce millésime est DÉJÀ en service, les vues rga_zone_courante_g
+  # et _gg s'appuient sur ces tables. Elles sont recréées plus bas — et elles
+  # sont le seul objet que ce CASCADE puisse emporter, puisque rien d'autre ne
+  # dépend de ces deux tables.
+  psql_ <<SQL
+DROP TABLE IF EXISTS ${TABLE}_g, ${TABLE}_gg CASCADE;
+
+-- ST_CollectionExtract(...,3) : ST_MakeValid peut renvoyer une collection
+-- mêlant lignes et polygones sur une géométrie dégénérée. Seuls les polygones
+-- se dessinent.
+CREATE TABLE ${TABLE}_g AS
+SELECT niveau_code,
+       ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(geom, 0.0015)), 3))::geometry(MultiPolygon, 4326) AS geom,
+       ST_Area(geom::geography) / 1e6 AS km2
+  FROM $TABLE
+ WHERE niveau_code IS NOT NULL;
+
+CREATE TABLE ${TABLE}_gg AS
+SELECT niveau_code,
+       ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(geom, 0.03)), 3))::geometry(MultiPolygon, 4326) AS geom
+  FROM ${TABLE}_g
+ WHERE km2 > 20;
+
+CREATE INDEX ON ${TABLE}_g  USING GIST(geom);
+CREATE INDEX ON ${TABLE}_gg USING GIST(geom);
+ANALYZE ${TABLE}_g;
+ANALYZE ${TABLE}_gg;
+
+\\echo '-- Poids des niveaux de généralisation'
+SELECT 'exact' AS niveau, count(*) AS objets, pg_size_pretty(pg_total_relation_size('$TABLE')) AS taille FROM $TABLE
+UNION ALL SELECT 'g  (110 m)', count(*), pg_size_pretty(pg_total_relation_size('${TABLE}_g'))  FROM ${TABLE}_g
+UNION ALL SELECT 'gg (2,2 km)', count(*), pg_size_pretty(pg_total_relation_size('${TABLE}_gg')) FROM ${TABLE}_gg;
+SQL
+
+  # Ce millésime était-il en service ? Alors le CASCADE ci-dessus vient de
+  # retirer ses deux vues cartographiques : la carte répondrait 503 jusqu'à la
+  # prochaine bascule. On les remet, sans toucher à rga_zone_courante.
+  if [ "$(psql_ -At -c "SELECT count(*) FROM pg_views WHERE viewname = 'rga_zone_courante' AND definition LIKE '%${TABLE}%'")" != "0" ]; then
+    say "Millésime en service : les vues cartographiques sont recréées"
+    psql_ <<SQL
+BEGIN;
+CREATE OR REPLACE VIEW rga_zone_courante_g  AS SELECT geom, niveau_code FROM ${TABLE}_g;
+CREATE OR REPLACE VIEW rga_zone_courante_gg AS SELECT geom, niveau_code FROM ${TABLE}_gg;
+COMMIT;
+SQL
+  fi
+}
+
 basculer_la_vue() {
   say "Bascule de rga_zone_courante sur $TABLE"
+  # Les trois vues basculent dans LA MÊME transaction : la carte et le verdict
+  # ne doivent jamais, fût-ce une seconde, parler de deux millésimes différents.
   psql_ <<SQL
 BEGIN;
 DROP VIEW IF EXISTS rga_zone_courante;
+DROP VIEW IF EXISTS rga_zone_courante_g;
+DROP VIEW IF EXISTS rga_zone_courante_gg;
 CREATE VIEW rga_zone_courante AS
     SELECT id, geom, niveau_code, niveau_libelle, millesime FROM $TABLE;
+CREATE VIEW rga_zone_courante_g AS
+    SELECT geom, niveau_code FROM ${TABLE}_g;
+CREATE VIEW rga_zone_courante_gg AS
+    SELECT geom, niveau_code FROM ${TABLE}_gg;
 COMMIT;
 SQL
 }
@@ -105,6 +194,11 @@ SQL
 # pour changer une vue n'aurait aucun sens.
 if [ "$BASCULE_SEULE" = 1 ]; then
   basculer_la_vue
+  exit 0
+fi
+
+if [ "$GENERALISER_SEULE" = 1 ]; then
+  generaliser
   exit 0
 fi
 
@@ -209,6 +303,11 @@ if [ -n "$ATTENDU" ] && [ "$ATTENDU" != "$CHARGE" ]; then
   exit 1
 fi
 say "Complétude : $CHARGE polygones, conforme au shapefile"
+
+# La généralisation vient APRÈS le contrôle de complétude, et pas avant : sur un
+# chargement partiel, elle brasserait trois minutes de géométries pour un
+# millésime que le script refuse de mettre en service de toute façon.
+generaliser
 
 say "Vérification"
 psql_ <<SQL
